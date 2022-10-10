@@ -1,0 +1,1821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>
+    Pipeline tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs
+  </title>
+<style>
+#title{
+  background-color: #ec407a;
+  color: white;
+  padding: 2em;
+}
+h1 {
+  margin-bottom: 0em;
+}
+#subtitle {
+  font-variant: small-caps;
+  text-transform: lowercase;
+  letter-spacing: 0.2em;
+}
+.run-info ul {
+  list-style: none;
+}
+.run-info ul li {
+  display: inline;
+  margin-right: 6em;
+  margin-left: -3em;
+  text-transform: uppercase;
+  font-size: small;
+  color: #ec407a;
+}
+#content {
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-top: 2em;
+  color: #263238;
+  font-family: Helvetica, sans-serif;
+}
+p {
+  margin: 0;
+}
+.command-table {
+  background-color: #eceff1;
+  padding: 0.3em;
+  border-radius: 0.3em;
+  margin-bottom: 4em;
+}
+.command-table .fail-ignored {
+  background-color: #e65100cc;
+  padding: 0.3em;
+  border-radius: 0.3em;
+}
+.command-table .success {
+  background-color: #1a237ecc;
+  padding: 0.3em;
+  border-radius: 0.3em;
+}
+.command-table .in-progress {
+  background-color: black;
+  padding: 0.3em;
+  border-radius: 0.3em;
+}
+.command-table .non-started {
+  background-color: #26323844;
+  padding: 0.3em;
+  border-radius: 0.3em;
+}
+.command-table .fail {
+  background-color: #f44336cc;
+  padding: 0.3em;
+  border-radius: 0.3em;
+}
+.command-content {
+  background-color: #eceff1;
+  padding: 1em;
+}
+.command-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1em;
+}
+.command-id-link{
+  flex-grow: 0;
+}
+.command-id-link a {
+  font-size: xx-large;
+  text-align: center;
+  font-weight: bold;
+  text-shadow: 1px  1px 0px #000000bb,
+              -1px -1px 0px #ffffffbb;
+  text-decoration: none;
+  margin-left: 0.2em;
+}
+.command-id-link a:link {
+  text-shadow: 1px  1px 0px #000000bb,
+              -1px -1px 0px #ffffffbb;
+}
+.command-id-link a:visited {
+  text-shadow: 1px  1px 0px #000000bb,
+              -1px -1px 0px #ffffffbb;
+}
+.command-id-link a:visited:hover {
+  color: #ec407a;
+  background-color: #00000000;
+  text-shadow: 1px  1px 0px #000000bb,
+              -1px -1px 0px #ffffffbb,
+               0px 0px 10px #fff,
+               0px 0px 5px #ec407a,
+               0px 0px 5px #ec407a;
+}
+.command-id-link a:hover {
+  color: #ec407a;
+  background-color: #00000000;
+  text-shadow: 1px  1px 0px #000000bb,
+              -1px -1px 0px #ffffffbb
+               0px 0px 10px #fff,
+               0px 0px 5px #ec407a,
+               0px 0px 5px #ec407a;
+}
+.command-id-link a:active {
+  color: #ffeb3b;
+  background-color: #00000000;
+  text-shadow: 1px  1px 0px #000000bb,
+              -1px -1px 0px #ffffffbb,
+                 0px 0px 10px #fff,
+                 0px 0px 5px #ffeb3b,
+                 0px 0px 5px #ffeb3b;
+}
+.command-id-link a:visited:active {
+  color: #ffeb3b;
+  background-color: #00000000;
+  text-shadow: 1px  1px 0px #000000bb,
+              -1px -1px 0px #ffffffbb,
+                 0px 0px 10px #fff,
+                 0px 0px 5px #ffeb3b,
+                 0px 0px 5px #ffeb3b;
+}
+.command-description {
+  color: #26323899;
+  font-size: smaller;
+  text-align: center;
+  font-weight: bold;
+  flex-grow: 1;
+}
+
+.command-invocation {
+  padding: 1em;
+  color: #fff;
+  background-color: #005662;
+  font-size: small;
+  font-family: monospace;
+  border-radius: 0.5em;
+  text-shadow: 0 0 2px #ffccbccc;
+}
+.command-stats-table {
+  margin-top: 0.2em;
+  border-radius: 0.5em;
+  padding: 0.2em;
+  padding-top: 0.4em;
+  display: flex;
+  flex-direction: column;
+  background-color: #eae3998a;
+  color: #263238cc;
+  margin-bottom: 0.2em;
+}
+.command-stats-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-evenly;
+  margin-top: 0.4em;
+  margin-bottom: 0.4em;
+  font-size: small;
+  text-transform: uppercase;
+}
+.command-stats-row p .value {
+  color: #00251aaa;
+  text-shadow: 0 0 2px #82ada944;
+  font-weight: bold;
+}
+.literal-stdout {
+  margin-top: 0.4em;
+  margin-bottom: 0.2em;
+  padding: 1em;
+  border-radius: 0.5em;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+.output-box {
+  margin-top: 0.4em;
+  margin-bottom: 0.2em;
+  padding: 1em;
+  color: #000a12;
+  background-color: #cfd8dc;
+  font-size: small;
+  font-family: monospace;
+  border-radius: 0.5em;
+  max-height: 20em;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+.output-box xmp{
+  white-space: pre;
+}
+.stage-name p {
+  margin-left: 0.5em;
+  color: #546e7a;
+  text-shadow:  -1px  0px 0px #fff
+               ,-2px  0px 0px #ffffff99
+               ,-1px  1px 0px #ffffff99
+               ;
+  font-size: 48pt;
+  font-variant: small-caps;
+  text-transform: lowercase;
+  font-weight: bold;
+  font-style: italic;
+}
+.stage-name .underline {
+  width: 100%;
+  height: 1.1em;
+  background-color: #546e7a;
+  margin-top: -1.6em;
+}
+.stage-name {
+  margin-top: 6em;
+  margin-bottom: 3em;
+}
+
+.outcome-table-info-box {
+  margin-top: 0.4em;
+  margin-bottom: 0.2em;
+  padding: 1em;
+  color: #000a12;
+  background-color: #ffee58;
+  border-radius: 0.5em;
+}
+.outcome-table-info-box .outcome{
+  font-weight: bold;
+}
+#toc {
+  margin-bottom: 6em;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 1;
+  margin-right: 3em;
+}
+.toc-title {
+  text-align: center;
+  font-variant: small-caps;
+  text-transform: lowercase;
+  margin-bottom: -1em;
+}
+.toc-section{
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  text-transform: capitalize;
+}
+.toc-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+}
+.toc-row-icon {
+  padding-right: 8px;
+}
+.status-icon-cross {
+  fill: #f44336;
+    width: 16px;
+    height: 16px;
+}
+.status-icon-tick {
+  fill: #3f51b5;
+  stroke: #ffffff77;
+  stroke-width: 1px;
+  width: 16px;
+  height: 16px;
+}
+
+.status-icon-in-progress {
+  fill: #333;
+  width: 16px;
+  height: 16px;
+}
+
+.status-icon-in-progress circle {
+  stroke: #333;
+  stroke-width: 2px;
+  fill: none
+}
+a:link {
+  color: #1e88e5;
+}
+a:visited {
+  color: #1e88e5;
+}
+a:visited:hover {
+  background-color: #1e88e5;
+  color: #fff;
+  text-decoration: none;
+}
+a:hover {
+  background-color: #1e88e5;
+  color: #fff;
+  text-decoration: none;
+}
+a:active {
+  background-color: #ec407a;
+  color: #fff;
+  text-decoration: none;
+}
+a:visited:active {
+  background-color: #ec407a;
+  color: #fff;
+  text-decoration: none;
+}
+
+#contents-container {
+  margin-top: 6em;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  align-content: flex-start;
+}
+
+#depgraph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-content: flex-start;
+  flex-shrink: 7;
+}
+
+#depgraph-title p {
+  text-align: center;
+  font-variant: small-caps;
+  text-transform: lowercase;
+}
+
+#depgraph-preview img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+#depgraph-preview {
+  padding: 1em;
+}
+
+.memory-box {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5em;
+  align-items: center;
+}
+.memory-preview {
+  width: 75%;
+}
+.memory-preview svg {
+  margin-left: -1em;
+  margin-right: -2em;
+}
+.memory-table {
+}
+.memory-title {
+  text-align: center;
+  font-style: bold;
+}
+.memory-subtitle {
+  text-transform: lowercase;
+  font-variant: small-caps;
+  text-align: center;
+  opacity: 0.8;
+}
+.memory-pad {
+  width: 1.5em;
+}
+.memory-value {
+  text-align: center;
+  margin-right: 2em;
+}
+.rss {
+  color: #ab47bc;
+}
+.vsz {
+  color: #4caf50;
+}
+
+
+@media (prefers-color-scheme: dark){
+  a:link {
+    color: #29b6f6;
+  }
+  a:visited {
+    color: #29b6f6;
+  }
+  a:visited:hover {
+    color: #263238;
+    background-color: #29b6f6;
+  }
+  a:hover {
+    color: #263238;
+    background-color: #29b6f6;
+  }
+  a:active {
+    color: #263238;
+    background-color: #ec407a;
+  }
+  a:visited:active {
+    color: #263238;
+    background-color: #ec407a;
+  }
+  .command-id-link a:link {
+    text-shadow: 1px  1px 0px #000000bb,
+                -1px -1px 0px #ffffffbb;
+  }
+  .command-id-link a:visited {
+    text-shadow: 1px  1px 0px #000000bb,
+                -1px -1px 0px #ffffffbb;
+  }
+  .command-id-link a:visited:hover {
+    color: #ec407a;
+    background-color: #00000000;
+    text-shadow: 1px  1px 0px #000000bb,
+                -1px -1px 0px #ffffffbb.
+                 0px 0px 10px #fff,
+                 0px 0px 5px #ec407a,
+                 0px 0px 5px #ec407a;
+  }
+  .command-id-link a:hover {
+    color: #ec407a;
+    background-color: #00000000;
+    text-shadow: 1px  1px 0px #000000bb,
+                -1px -1px 0px #ffffffbb,
+                 0px 0px 10px #fff,
+                 0px 0px 5px #ec407a,
+                 0px 0px 5px #ec407a;
+  }
+  .command-id-link a:active {
+    color: #ffeb3b;
+    background-color: #00000000;
+    text-shadow: 1px  1px 0px #000000bb,
+                -1px -1px 0px #ffffffbb,
+                 0px 0px 10px #fff,
+                 0px 0px 5px #ffeb3b,
+                 0px 0px 5px #ffeb3b;
+  }
+  .command-id-link a:visited:active {
+    color: #ffeb3b;
+    background-color: #00000000;
+    text-shadow: 1px  1px 0px #000000bb,
+                -1px -1px 0px #ffffffbb,
+                 0px 0px 10px #fff,
+                 0px 0px 5px #ffeb3b,
+                 0px 0px 5px #ffeb3b;
+  }
+  body {
+    color: #babdbe;
+    background-color: #263238;
+  }
+  .outcome-table-info-box p{
+    color: #000a12;
+  }
+  p {
+    color: #babdbe;
+  }
+  #subtitle {
+    color: #fff;
+  }
+  .command-table {
+    background-color: #37474f;
+  }
+  .command-content {
+    background-color: #37474f;
+  }
+  .command-invocation p {
+    color: #fff;
+  }
+  .command-stats-table {
+    background-color: #eae399d0;
+    color: #263238;
+  }
+  .command-stats-table p {
+    color: #263238;
+  }
+  .output-box {
+    color: #cfd8dccc;
+    background-color: #102027;
+  }
+  .stage-name p {
+    text-shadow: -1px  0px 0px #263238,
+                 -2px  0px 0px #26323899,
+                 -1px  1px 0px #26323899;
+  }
+  .status-icon-in-progress { fill: #ddd; }
+  .status-icon-in-progress circle { stroke: #ddd; }
+
+  /* SVG graphs */
+  g text {
+    fill: #eceff1;
+    stroke: #fff0;
+  }
+}
+</style>
+</head>
+<body>
+<div id="content">
+
+  <div id="title">
+    <h1>
+      Book Runner pipeline &lsquo;tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs&rsquo;
+    </h1>
+    <p id="subtitle">
+      Litani CI Dashboard
+    </p>
+  </div><!-- id="title" -->
+
+  <div class=run-info>
+    <ul>
+      <li>Pipeline status: fail</li>
+      <li>2022-10-10T20:41:31Z</li>
+      <li>ad3649ed-bfaa-468b-a4e3-e2ce74152045</li>
+    </ul>
+  </div><!-- class=run-info -->
+
+  <div id="contents-container">
+
+    <div id="toc">
+      <div class="toc-title">
+        <p>Summary of jobs for this pipeline</p>
+      </div><!-- class="toc-title" -->
+
+      
+        <div class="toc-section">
+          <p>check</p>
+        </div><!-- class="toc-section" -->
+        
+          <div class="toc-row">
+
+            <div class="toc-row-icon">
+              
+                <svg height="16px" width="16px" class="status-icon-tick">
+                  <polygon points="1,11 6,15 15,3 13,1 6,12 3,8"></polygon>
+                </svg>
+              
+            </div><!-- class="toc-row-icon" -->
+
+            <div class="toc-row-job-name">
+              <p>
+              <a href="#job-e2b7560a-3962-4deb-abde-ca78fefd0a41">
+              
+              Is this valid Rust code?
+              
+              </a>
+              </p>
+            </div><!-- class="toc-row-job-name" -->
+
+          </div><!-- class="toc-row" -->
+
+        
+      
+        <div class="toc-section">
+          <p>codegen</p>
+        </div><!-- class="toc-section" -->
+        
+          <div class="toc-row">
+
+            <div class="toc-row-icon">
+              
+                <svg height="16px" width="16px" class="status-icon-tick">
+                  <polygon points="1,11 6,15 15,3 13,1 6,12 3,8"></polygon>
+                </svg>
+              
+            </div><!-- class="toc-row-icon" -->
+
+            <div class="toc-row-job-name">
+              <p>
+              <a href="#job-69d2862a-6a50-40ac-b52b-2fef47619305">
+              
+              Does Kani support all the Rust features used in it?
+              
+              </a>
+              </p>
+            </div><!-- class="toc-row-job-name" -->
+
+          </div><!-- class="toc-row" -->
+
+        
+      
+        <div class="toc-section">
+          <p>verification</p>
+        </div><!-- class="toc-section" -->
+        
+          <div class="toc-row">
+
+            <div class="toc-row-icon">
+              
+                <svg height="16px" width="16px" class="status-icon-cross">
+                  <polygon points="
+                      1,3 7,8 1,13 3,15 8,9 13,15 15,13 9,8 15,3 13,1 8,7 3,1">
+                  </polygon>
+                </svg>
+              
+            </div><!-- class="toc-row-icon" -->
+
+            <div class="toc-row-job-name">
+              <p>
+              <a href="#job-5986d459-fa28-4a19-ba4e-ad22a5057f9a">
+              
+              Can Kani reason about it?
+              
+              </a>
+              </p>
+            </div><!-- class="toc-row-job-name" -->
+
+          </div><!-- class="toc-row" -->
+
+        
+      
+    </div><!-- id="toc" -->
+
+
+    
+
+  </div><!-- id="contents-container" -->
+
+
+  
+  <div class="stage">
+    <div class="stage-name">
+      <p>check</p>
+      <div class="underline"></div>
+    </div><!-- class="stage-name" -->
+
+    
+    <div class="command-table" id="job-e2b7560a-3962-4deb-abde-ca78fefd0a41">
+      
+      <div class="success">
+      
+        <div class="command-content">
+          <div class="command-header">
+            <div class="command-id-link">
+              <p>
+                <a href="#job-e2b7560a-3962-4deb-abde-ca78fefd0a41">#</a>
+              </p>
+            </div><!-- class="command-id-link" -->
+            <div class="command-description">
+              
+              <p>
+                Is this valid Rust code?
+              </p>
+              
+            </div><!-- class="command-description" -->
+          </div><!-- class="command-header" -->
+          <div class="command-invocation">
+            <p>
+            "kani-compiler" "--edition" "2015" "-Z" "no-codegen" "tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs"
+            </p>
+          </div><!-- class="command-invocation" -->
+
+          
+          <div class="command-stats-table">
+            
+            <div class="command-stats-row">
+              <p>Command return code:
+              <span class="value">
+                0
+              </span></p>
+              <p>OK returns:
+              <span class="value">
+                ['0']
+              </span></p>
+              <p>Ignored returns:
+              <span class="value">
+                None
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Timeout:
+              <span class="value">
+                5
+              </span></p>
+              <p>Timeout ok:
+              <span class="value">
+                False
+              </span></p>
+              <p>Timeout ignored:
+              <span class="value">
+                False
+              </span></p>
+              <p>Timeout reached:
+              <span class="value">
+                False
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Start time:
+              <span class="value">
+                2022-10-10T20:49:58Z
+              </span></p>
+              <p>Duration:
+              <span class="value">
+                00s
+              </span></p>
+              <p>End time:
+              <span class="value">
+                2022-10-10T20:49:58Z
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Command successful:
+              <span class="value">
+              
+              yes
+              
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+             
+          </div><!-- class="command-stats-table" -->
+          
+
+          
+
+
+          
+
+
+          
+
+          
+
+        </div><!-- class="command-content" -->
+      </div><!-- class="fail" -->
+    </div><!-- id="command-table" -->
+    
+
+  </div><!-- class="stage" -->
+  
+  <div class="stage">
+    <div class="stage-name">
+      <p>codegen</p>
+      <div class="underline"></div>
+    </div><!-- class="stage-name" -->
+
+    
+    <div class="command-table" id="job-69d2862a-6a50-40ac-b52b-2fef47619305">
+      
+      <div class="success">
+      
+        <div class="command-content">
+          <div class="command-header">
+            <div class="command-id-link">
+              <p>
+                <a href="#job-69d2862a-6a50-40ac-b52b-2fef47619305">#</a>
+              </p>
+            </div><!-- class="command-id-link" -->
+            <div class="command-description">
+              
+              <p>
+                Does Kani support all the Rust features used in it?
+              </p>
+              
+            </div><!-- class="command-description" -->
+          </div><!-- class="command-header" -->
+          <div class="command-invocation">
+            <p>
+            "kani-compiler" "--edition" "2015" "--out-dir" "build/tmp" "tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs"
+            </p>
+          </div><!-- class="command-invocation" -->
+
+          
+          <div class="command-stats-table">
+            
+            <div class="command-stats-row">
+              <p>Command return code:
+              <span class="value">
+                0
+              </span></p>
+              <p>OK returns:
+              <span class="value">
+                ['0']
+              </span></p>
+              <p>Ignored returns:
+              <span class="value">
+                None
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Timeout:
+              <span class="value">
+                10
+              </span></p>
+              <p>Timeout ok:
+              <span class="value">
+                False
+              </span></p>
+              <p>Timeout ignored:
+              <span class="value">
+                False
+              </span></p>
+              <p>Timeout reached:
+              <span class="value">
+                False
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Start time:
+              <span class="value">
+                2022-10-10T20:49:59Z
+              </span></p>
+              <p>Duration:
+              <span class="value">
+                00s
+              </span></p>
+              <p>End time:
+              <span class="value">
+                2022-10-10T20:49:59Z
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Command successful:
+              <span class="value">
+              
+              yes
+              
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+             
+          </div><!-- class="command-stats-table" -->
+          
+
+          
+
+
+          
+
+
+          
+
+          
+
+        </div><!-- class="command-content" -->
+      </div><!-- class="fail" -->
+    </div><!-- id="command-table" -->
+    
+
+  </div><!-- class="stage" -->
+  
+  <div class="stage">
+    <div class="stage-name">
+      <p>verification</p>
+      <div class="underline"></div>
+    </div><!-- class="stage-name" -->
+
+    
+    <div class="command-table" id="job-5986d459-fa28-4a19-ba4e-ad22a5057f9a">
+      
+      <div class="fail">
+      
+        <div class="command-content">
+          <div class="command-header">
+            <div class="command-id-link">
+              <p>
+                <a href="#job-5986d459-fa28-4a19-ba4e-ad22a5057f9a">#</a>
+              </p>
+            </div><!-- class="command-id-link" -->
+            <div class="command-description">
+              
+              <p>
+                Can Kani reason about it?
+              </p>
+              
+            </div><!-- class="command-description" -->
+          </div><!-- class="command-header" -->
+          <div class="command-invocation">
+            <p>
+            RUSTFLAGS="--edition 2015" "kani" "tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs" "--enable-unstable" "--function" "main"
+            </p>
+          </div><!-- class="command-invocation" -->
+
+          
+          <div class="command-stats-table">
+            
+            <div class="command-stats-row">
+              <p>Command return code:
+              <span class="value">
+                1
+              </span></p>
+              <p>OK returns:
+              <span class="value">
+                ['0']
+              </span></p>
+              <p>Ignored returns:
+              <span class="value">
+                None
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Timeout:
+              <span class="value">
+                60
+              </span></p>
+              <p>Timeout ok:
+              <span class="value">
+                False
+              </span></p>
+              <p>Timeout ignored:
+              <span class="value">
+                False
+              </span></p>
+              <p>Timeout reached:
+              <span class="value">
+                False
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Start time:
+              <span class="value">
+                2022-10-10T20:49:59Z
+              </span></p>
+              <p>Duration:
+              <span class="value">
+                04s
+              </span></p>
+              <p>End time:
+              <span class="value">
+                2022-10-10T20:50:03Z
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+            <div class="command-stats-row">
+              <p>Command successful:
+              <span class="value">
+              
+              no
+              
+              </span></p>
+            </div><!-- class="command-stats-row" -->
+             
+          </div><!-- class="command-stats-table" -->
+          
+
+          
+
+
+          
+
+
+          
+            
+            <div class="output-box"><xmp>stdout:
+              
+Checking harness main...
+CBMC 5.67.0 (cbmc-5.67.0)
+CBMC version 5.67.0 (cbmc-5.67.0) 64-bit x86_64 linux
+Reading GOTO program from file tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.for-main.out
+Generating GOTO Program
+Adding CPROVER library (x86_64)
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 16 object bits, 48 offset bits (user-specified)
+Starting Bounded Model Checking
+Unwinding loop _RNvMs5_NtCsbTLSx9MNYye_5alloc5boxedINtB5_3BoxSReE11into_uniqueCs9fnmAjEr5v1_1_5.2 iteration 1 file /home/runner/.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs line 1132 column 23 function std::boxed::Box::<[&str]>::into_unique thread 0
+Unwinding loop _RNvMs5_NtCsbTLSx9MNYye_5alloc5boxedINtB5_3BoxSReE11into_uniqueCs9fnmAjEr5v1_1_5.2 iteration 1 file /home/runner/.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs line 1132 column 23 function std::boxed::Box::<[&str]>::into_unique thread 0
+Unwinding loop _RNvMNtNtCshwRV6iS787W_4core3ptr7mut_ptrORe7is_nullCs9fnmAjEr5v1_1_5.0 iteration 1 file /home/runner/.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs line 38 column 15 function std::ptr::mut_ptr::<impl *mut &str>::is_null thread 0
+Unwinding loop _RINvMNtCshwRV6iS787W_4core6optionINtB3_6OptionRReE5ok_orNtCs9fnmAjEr5v1_1_511DoubleErrorEBU_.1 iteration 1 file /home/runner/.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs line 1059 column 5 function std::option::Option::<&&str>::ok_or::<DoubleError> thread 0
+Unwinding loop _RINvMNtCshwRV6iS787W_4core6optionINtB3_6OptionRReE5ok_orNtCs9fnmAjEr5v1_1_511DoubleErrorEBU_.0 iteration 1 file /home/runner/.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs line 1059 column 5 function std::option::Option::<&&str>::ok_or::<DoubleError> thread 0
+aborting path on assume(false) at  thread 0
+aborting path on assume(false) at file /home/runner/work/kani/kani/tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs line 56 column 18 function double_first thread 0
+Runtime Symex: 0.151318s
+size of program expression: 2743 steps
+slicing removed 1814 assignments
+Generated 55 VCC(s), 16 remaining after simplification
+Runtime Postprocess Equation: 0.00164919s
+Passing problem to propositional reduction
+converting SSA
+Runtime Convert SSA: 0.00372327s
+Running propositional reduction
+Post-processing
+Runtime Post-process: 0.000493196s
+Solving with MiniSAT 2.2.1 with simplifier
+3457 variables, 3874 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 0.011128s
+Runtime decision procedure: 0.022881s
+Running propositional reduction
+Solving with MiniSAT 2.2.1 with simplifier
+3457 variables, 0 clauses
+SAT checker inconsistent: instance is UNSATISFIABLE
+Runtime Solver: 0.000869395s
+Runtime decision procedure: 0.00195949s
+
+RESULTS:
+Check 1: malloc.assertion.1
+- Status: UNDETERMINED
+- Description: "max allocation size exceeded"
+- Location: <builtin-library-malloc>:28 in function malloc
+
+Check 2: malloc.assertion.2
+- Status: UNDETERMINED
+- Description: "max allocation may fail"
+- Location: <builtin-library-malloc>:33 in function malloc
+
+Check 3: __rust_dealloc.assertion.1
+- Status: UNDETERMINED
+- Description: "Alignment is power of two"
+- Location: library/kani/kani_lib.c:74 in function __rust_dealloc
+
+Check 4: __rust_dealloc.assertion.2
+- Status: UNDETERMINED
+- Description: "rust_dealloc must be called on an object whose allocated size matches its layout"
+- Location: library/kani/kani_lib.c:76 in function __rust_dealloc
+
+Check 5: alloc::alloc::box_free::<[&str], std::alloc::Global>.unsupported_construct.1
+- Status: UNDETERMINED
+- Description: "TerminatorKind::Resume is not currently supported by Kani. Please post your example at https://github.com/model-checking/kani/issues/692"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/alloc.rs:340:1 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 6: std::fmt::Arguments::new_v1.assertion.1
+- Status: UNDETERMINED
+- Description: "This is a placeholder message; Kani doesn't support message formatted at runtime"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:396:13 in function std::fmt::Arguments::new_v1
+
+Check 7: std::hint::unreachable_unchecked.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/hint.rs:103:14 in function std::hint::unreachable_unchecked
+
+Check 8: std::ptr::mut_ptr::<impl *mut &str>::is_null.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:38:15 in function std::ptr::mut_ptr::<impl *mut &str>::is_null
+
+Check 9: std::boxed::Box::<[&str]>::into_unique.safety_check.1
+- Status: UNDETERMINED
+- Description: "`src` must be properly aligned"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1117:9 in function std::boxed::Box::<[&str]>::into_unique
+
+Check 10: std::boxed::Box::<[&str]>::into_unique.safety_check.2
+- Status: UNDETERMINED
+- Description: "`dst` must be properly aligned"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1117:9 in function std::boxed::Box::<[&str]>::into_unique
+
+Check 11: std::boxed::Box::<[&str]>::into_unique.arithmetic_overflow.1
+- Status: UNDETERMINED
+- Description: "copy_nonoverlapping: attempt to compute number in bytes which would overflow"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1117:9 in function std::boxed::Box::<[&str]>::into_unique
+
+Check 12: std::boxed::Box::<[&str]>::into_unique.unsupported_construct.1
+- Status: UNDETERMINED
+- Description: "TerminatorKind::Resume is not currently supported by Kani. Please post your example at https://github.com/model-checking/kani/issues/692"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1125:5 in function std::boxed::Box::<[&str]>::into_unique
+
+Check 13: <std::vec::Vec<&str> as std::ops::Drop>::drop.assume.1
+- Status: UNDETERMINED
+- Description: "assumption failed"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1210:13 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 14: print.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:62:11 in function print
+
+Check 15: std::slice::hack::into_vec::<&str, std::alloc::Global>.unsupported_construct.1
+- Status: UNDETERMINED
+- Description: "TerminatorKind::Resume is not currently supported by Kani. Please post your example at https://github.com/model-checking/kani/issues/692"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/slice.rs:97:5 in function std::slice::hack::into_vec::<&str, std::alloc::Global>
+
+Check 16: <std::vec::Vec<&str> as std::ops::Deref>::deref.assume.1
+- Status: UNDETERMINED
+- Description: "assumption failed"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1173:13 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 17: std::option::Option::<&&str>::ok_or::<DoubleError>.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1055:15 in function std::option::Option::<&&str>::ok_or::<DoubleError>
+
+Check 18: core::num::<impl core::str::traits::FromStr for i32>::from_str.missing_definition.1
+- Status: FAILURE
+- Description: "Function `core::num::<impl core::str::traits::FromStr for i32>::from_str` with missing definition is unreachable"
+- Location: Unknown file in function core::num::<impl core::str::traits::FromStr for i32>::from_str
+
+Check 19: std::alloc::Layout::array::inner.assertion.1
+- Status: UNDETERMINED
+- Description: "attempt to divide by zero"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:436:41 in function std::alloc::Layout::array::inner
+
+Check 20: <DoubleError as std::error::Error>::source.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:33:15 in function <DoubleError as std::error::Error>::source
+
+Check 21: <std::result::Result<i32, std::num::ParseIntError> as std::ops::Try>::branch.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs:2089:15 in function <std::result::Result<i32, std::num::ParseIntError> as std::ops::Try>::branch
+
+Check 22: double_first.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:53:17 in function double_first
+
+Check 23: double_first.assertion.1
+- Status: UNDETERMINED
+- Description: "attempt to multiply with overflow"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:58:8 in function double_first
+
+Check 24: double_first.unreachable.2
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:56:18 in function double_first
+
+Check 25: <std::result::Result<&&str, DoubleError> as std::ops::Try>::branch.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs:2089:15 in function <std::result::Result<&&str, DoubleError> as std::ops::Try>::branch
+
+Check 26: std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked.unreachable.1
+- Status: UNDETERMINED
+- Description: "unreachable code"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs:1527:15 in function std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked
+
+Check 27: std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked.unsupported_construct.1
+- Status: UNDETERMINED
+- Description: "TerminatorKind::Resume is not currently supported by Kani. Please post your example at https://github.com/model-checking/kani/issues/692"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs:1525:5 in function std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked
+
+Check 28: main.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 29: main.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 30: main.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 31: main.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 32: main.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 33: main.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 34: main.pointer_dereference.7
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 35: main.pointer_dereference.8
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 36: main.pointer_dereference.9
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 37: main.pointer_dereference.10
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 38: main.pointer_dereference.11
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 39: main.pointer_dereference.12
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/macros.rs:52:37 in function main
+
+Check 40: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:241:40 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 41: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:241:40 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 42: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:241:40 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 43: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:241:40 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 44: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:241:40 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 45: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:241:40 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 46: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.7
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:242:13 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 47: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.8
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:247:49 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 48: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.9
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:247:49 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 49: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.10
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:247:49 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 50: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.11
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:247:49 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 51: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.12
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:247:49 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 52: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.13
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:247:49 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 53: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.14
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:248:23 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 54: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.15
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:248:23 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 55: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.16
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:248:23 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 56: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.17
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:248:23 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 57: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.18
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:248:23 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 58: alloc::raw_vec::RawVec::<&str>::current_memory.pointer_dereference.19
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:248:23 in function alloc::raw_vec::RawVec::<&str>::current_memory
+
+Check 59: __rust_dealloc.precondition_instance.1
+- Status: UNDETERMINED
+- Description: "free argument must be NULL or valid pointer"
+- Location: library/kani/kani_lib.c:78 in function __rust_dealloc
+
+Check 60: __rust_dealloc.precondition_instance.2
+- Status: UNDETERMINED
+- Description: "free argument must be dynamic object"
+- Location: library/kani/kani_lib.c:78 in function __rust_dealloc
+
+Check 61: __rust_dealloc.precondition_instance.3
+- Status: UNDETERMINED
+- Description: "free argument has offset zero"
+- Location: library/kani/kani_lib.c:78 in function __rust_dealloc
+
+Check 62: __rust_dealloc.precondition_instance.4
+- Status: UNDETERMINED
+- Description: "double free"
+- Location: library/kani/kani_lib.c:78 in function __rust_dealloc
+
+Check 63: __rust_dealloc.precondition_instance.5
+- Status: UNDETERMINED
+- Description: "free called for new[] object"
+- Location: library/kani/kani_lib.c:78 in function __rust_dealloc
+
+Check 64: __rust_dealloc.precondition_instance.6
+- Status: UNDETERMINED
+- Description: "free called for stack-allocated object"
+- Location: library/kani/kani_lib.c:78 in function __rust_dealloc
+
+Check 65: double_first.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:53:35 in function double_first
+
+Check 66: double_first.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:56:18 in function double_first
+
+Check 67: double_first.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:56:18 in function double_first
+
+Check 68: double_first.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:56:18 in function double_first
+
+Check 69: double_first.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:56:18 in function double_first
+
+Check 70: double_first.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:56:18 in function double_first
+
+Check 71: double_first.pointer_dereference.7
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:56:18 in function double_first
+
+Check 72: <DoubleError as std::error::Error>::source.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:33:15 in function <DoubleError as std::error::Error>::source
+
+Check 73: <DoubleError as std::error::Error>::source.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:33:15 in function <DoubleError as std::error::Error>::source
+
+Check 74: <DoubleError as std::error::Error>::source.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:33:15 in function <DoubleError as std::error::Error>::source
+
+Check 75: <DoubleError as std::error::Error>::source.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:33:15 in function <DoubleError as std::error::Error>::source
+
+Check 76: <DoubleError as std::error::Error>::source.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:33:15 in function <DoubleError as std::error::Error>::source
+
+Check 77: <DoubleError as std::error::Error>::source.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:33:15 in function <DoubleError as std::error::Error>::source
+
+Check 78: <DoubleError as std::error::Error>::source.pointer_dereference.7
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:34:38 in function <DoubleError as std::error::Error>::source
+
+Check 79: <alloc::raw_vec::RawVec<&str> as std::ops::Drop>::drop.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:478:16 in function <alloc::raw_vec::RawVec<&str> as std::ops::Drop>::drop
+
+Check 80: core::slice::<impl [&str]>::first.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/mod.rs:172:58 in function core::slice::<impl [&str]>::first
+
+Check 81: std::ptr::drop_in_place::<std::boxed::Box<[&str]>>.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:487:1 in function std::ptr::drop_in_place::<std::boxed::Box<[&str]>>
+
+Check 82: std::ptr::drop_in_place::<std::boxed::Box<[&str]>>.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:487:1 in function std::ptr::drop_in_place::<std::boxed::Box<[&str]>>
+
+Check 83: std::ptr::drop_in_place::<std::boxed::Box<[&str]>>.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:487:1 in function std::ptr::drop_in_place::<std::boxed::Box<[&str]>>
+
+Check 84: std::ptr::drop_in_place::<std::boxed::Box<[&str]>>.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:487:1 in function std::ptr::drop_in_place::<std::boxed::Box<[&str]>>
+
+Check 85: std::ptr::drop_in_place::<std::boxed::Box<[&str]>>.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:487:1 in function std::ptr::drop_in_place::<std::boxed::Box<[&str]>>
+
+Check 86: std::ptr::drop_in_place::<std::boxed::Box<[&str]>>.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:487:1 in function std::ptr::drop_in_place::<std::boxed::Box<[&str]>>
+
+Check 87: pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+
+Check 88: pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+
+Check 89: pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+
+Check 90: pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+
+Check 91: pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+
+Check 92: pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+
+Check 93: pointer_dereference.7
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+
+Check 94: pointer_dereference.8
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+
+Check 95: pointer_dereference.9
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+
+Check 96: pointer_dereference.10
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+
+Check 97: pointer_dereference.11
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+
+Check 98: pointer_dereference.12
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+
+Check 99: print.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: tests/bookrunner/books/Rust by Example/Error handling/Multiple error types/Wrapping errors/5.rs:66:20 in function print
+
+Check 100: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 101: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 102: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 103: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 104: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 105: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 106: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.7
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2921:81 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 107: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.8
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2921:81 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 108: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.9
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2921:81 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 109: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.10
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2921:81 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 110: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.11
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2921:81 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 111: <std::vec::Vec<&str> as std::ops::Drop>::drop.pointer_dereference.12
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2921:81 in function <std::vec::Vec<&str> as std::ops::Drop>::drop
+
+Check 112: memcpy.pointer.1
+- Status: UNDETERMINED
+- Description: "same object violation"
+- Location: <builtin-library-memcpy>:33 in function memcpy
+
+Check 113: memcpy.pointer.2
+- Status: UNDETERMINED
+- Description: "same object violation"
+- Location: <builtin-library-memcpy>:34 in function memcpy
+
+Check 114: std::boxed::Box::<[&str]>::into_unique.precondition_instance.1
+- Status: UNDETERMINED
+- Description: "memcpy src/dst overlap"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1117:9 in function std::boxed::Box::<[&str]>::into_unique
+
+Check 115: std::boxed::Box::<[&str]>::into_unique.precondition_instance.2
+- Status: UNDETERMINED
+- Description: "memcpy source region readable"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1117:9 in function std::boxed::Box::<[&str]>::into_unique
+
+Check 116: std::boxed::Box::<[&str]>::into_unique.precondition_instance.3
+- Status: UNDETERMINED
+- Description: "memcpy destination region writeable"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1117:9 in function std::boxed::Box::<[&str]>::into_unique
+
+Check 117: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 118: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 119: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 120: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 121: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 122: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 123: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.7
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 124: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.8
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 125: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.9
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 126: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.10
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 127: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.11
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 128: alloc::alloc::box_free::<[&str], std::alloc::Global>.pointer_dereference.12
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:381:20 in function alloc::alloc::box_free::<[&str], std::alloc::Global>
+
+Check 129: std::ptr::mut_ptr::<impl *mut &str>::is_null.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:38:15 in function std::ptr::mut_ptr::<impl *mut &str>::is_null
+
+Check 130: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 131: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 132: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 133: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 134: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 135: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:224:9 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 136: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.7
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2533:55 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 137: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.8
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2533:55 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 138: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.9
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2533:55 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 139: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.10
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2533:55 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 140: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.11
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2533:55 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 141: <std::vec::Vec<&str> as std::ops::Deref>::deref.pointer_dereference.12
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2533:55 in function <std::vec::Vec<&str> as std::ops::Deref>::deref
+
+Check 142: std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs:1527:15 in function std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked
+
+Check 143: std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs:1532:5 in function std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked
+
+Check 144: std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs:1532:5 in function std::result::Result::<std::alloc::Layout, std::alloc::LayoutError>::unwrap_unchecked
+
+Check 145: std::fmt::Arguments::new_v1.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:398:34 in function std::fmt::Arguments::new_v1
+
+Check 146: <std::alloc::Global as std::alloc::Allocator>::deallocate.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:128:9 in function <std::alloc::Global as std::alloc::Allocator>::deallocate
+
+Check 147: <std::alloc::Global as std::alloc::Allocator>::deallocate.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:128:9 in function <std::alloc::Global as std::alloc::Allocator>::deallocate
+
+Check 148: <std::alloc::Global as std::alloc::Allocator>::deallocate.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:128:9 in function <std::alloc::Global as std::alloc::Allocator>::deallocate
+
+Check 149: <std::alloc::Global as std::alloc::Allocator>::deallocate.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:128:9 in function <std::alloc::Global as std::alloc::Allocator>::deallocate
+
+Check 150: <std::alloc::Global as std::alloc::Allocator>::deallocate.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:138:9 in function <std::alloc::Global as std::alloc::Allocator>::deallocate
+
+Check 151: <std::alloc::Global as std::alloc::Allocator>::deallocate.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:138:9 in function <std::alloc::Global as std::alloc::Allocator>::deallocate
+
+Check 152: std::boxed::Box::<[&str]>::leak.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer NULL"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1189:24 in function std::boxed::Box::<[&str]>::leak
+
+Check 153: std::boxed::Box::<[&str]>::leak.pointer_dereference.2
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer invalid"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1189:24 in function std::boxed::Box::<[&str]>::leak
+
+Check 154: std::boxed::Box::<[&str]>::leak.pointer_dereference.3
+- Status: UNDETERMINED
+- Description: "dereference failure: deallocated dynamic object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1189:24 in function std::boxed::Box::<[&str]>::leak
+
+Check 155: std::boxed::Box::<[&str]>::leak.pointer_dereference.4
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1189:24 in function std::boxed::Box::<[&str]>::leak
+
+Check 156: std::boxed::Box::<[&str]>::leak.pointer_dereference.5
+- Status: UNDETERMINED
+- Description: "dereference failure: pointer outside object bounds"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1189:24 in function std::boxed::Box::<[&str]>::leak
+
+Check 157: std::boxed::Box::<[&str]>::leak.pointer_dereference.6
+- Status: UNDETERMINED
+- Description: "dereference failure: invalid integer address"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1189:24 in function std::boxed::Box::<[&str]>::leak
+
+Check 158: std::ptr::mut_ptr::<impl *mut u8>::guaranteed_eq.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/const_ptr.rs:799:18 in function std::ptr::mut_ptr::<impl *mut u8>::guaranteed_eq
+
+Check 159: std::option::Option::<&&str>::ok_or::<DoubleError>.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1055:15 in function std::option::Option::<&&str>::ok_or::<DoubleError>
+
+Check 160: std::alloc::Layout::array::inner.division-by-zero.1
+- Status: UNDETERMINED
+- Description: "division by zero"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:436:41 in function std::alloc::Layout::array::inner
+
+Check 161: std::alloc::Layout::array::inner.pointer_dereference.1
+- Status: UNDETERMINED
+- Description: "dereference failure: dead object"
+- Location: ../../../.rustup/toolchains/nightly-2022-09-13-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:437:24 in function std::alloc::Layout::array::inner
+
+
+SUMMARY:
+** 1 of 161 failed (160 undetermined)
+Failed Checks: Function `core::num::<impl core::str::traits::FromStr for i32>::from_str` with missing definition is unreachable
+
+VERIFICATION:- FAILED
+Verification Time: 0.4702047s
+
+              </xmp>
+            </div><!-- class="output-box" -->
+            
+          
+
+          
+          <div class="output-box"><xmp>stderr:
+            
+WARN kani_compiler::codegen_cprover_gotoc::codegen::rvalue Unable to find vtable symbol for virtual function <std::num::ParseIntError as std::fmt::Debug>::fmt, attempted lookup for symbol name: _ZN68_$LT$core..num..error..ParseIntError$u20$as$u20$core..fmt..Debug$GT$3fmt17heb6557e60ae44b4dE
+WARN kani_compiler::codegen_cprover_gotoc::codegen::rvalue Unable to find vtable symbol for virtual function <std::num::ParseIntError as std::fmt::Display>::fmt, attempted lookup for symbol name: _ZN70_$LT$core..num..error..ParseIntError$u20$as$u20$core..fmt..Display$GT$3fmt17h3f1787ff6f2ebc54E
+WARN kani_compiler::codegen_cprover_gotoc::codegen::rvalue Unable to find vtable symbol for virtual function <std::num::ParseIntError as std::error::Error>::description, attempted lookup for symbol name: _ZN70_$LT$core..num..error..ParseIntError$u20$as$u20$core..error..Error$GT$11description17h377129bec5388b9fE
+            </xmp>
+          </div><!-- class="output-box" -->
+          
+
+        </div><!-- class="command-content" -->
+      </div><!-- class="fail" -->
+    </div><!-- id="command-table" -->
+    
+
+  </div><!-- class="stage" -->
+  
+
+
+</div><!-- id="content" -->
+</body>
+</html>
