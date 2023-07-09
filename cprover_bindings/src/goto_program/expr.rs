@@ -19,7 +19,17 @@ use std::fmt::Debug;
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 /// An `Expr` represents an expression type: i.e. a computation that returns a value.
-/// Every expression has a type, a value, and a location (which may be `None`).
+/// Every expression has a type, a value, and a location (which may be `None`). An expression may
+/// also include a type annotation (`size_of_annotation`), which states that the expression is the
+/// result of computing `size_of(type)`.
+///
+/// The `size_of_annotation` is eventually picked up by CBMC's symbolic execution when simulating
+/// heap allocations: for a requested allocation of N bytes, CBMC can either create a byte array of
+/// size N, or, when a type T is annotated and N is a multiple of the size of T, an array of
+/// N/size_of(T) elements. The latter will facilitate updates using member operations (when T is an
+/// aggregate type), and pointer-typed members can be tracked more precisely. Note that this is
+/// merely a hint: failing to provide such an annotation may hamper performance, but will never
+/// affect correctness.
 ///
 /// The fields of `Expr` are kept private, and there are no getters that return mutable references.
 /// This means that the only way to create and update `Expr`s is using the constructors and setters.
@@ -41,6 +51,7 @@ pub struct Expr {
     value: Box<ExprValue>,
     typ: Type,
     location: Location,
+    size_of_annotation: Option<Type>,
 }
 
 /// The different kinds of values an expression can have.
@@ -131,7 +142,7 @@ pub enum ExprValue {
     StringConstant {
         s: InternedString,
     },
-    /// Struct initializer  
+    /// Struct initializer
     /// `struct foo the_foo = >>> {field1, field2, ... } <<<`
     Struct {
         values: Vec<Expr>,
@@ -142,7 +153,7 @@ pub enum ExprValue {
     },
     /// `(typ) self`. Target type is in the outer `Expr` struct.
     Typecast(Expr),
-    /// Union initializer  
+    /// Union initializer
     /// `union foo the_foo = >>> {.field = value } <<<`
     Union {
         value: Expr,
@@ -194,6 +205,12 @@ pub enum BinaryOperator {
     Rol,
     Ror,
     Shl,
+    VectorEqual,
+    VectorNotequal,
+    VectorGe,
+    VectorGt,
+    VectorLe,
+    VectorLt,
     Xor,
 }
 
@@ -258,7 +275,7 @@ pub fn arithmetic_overflow_result_type(operand_type: Type) -> Type {
     assert!(operand_type.is_integer());
     // give the struct the name "overflow_result_<type>", e.g.
     // "overflow_result_Unsignedbv"
-    let name: InternedString = format!("overflow_result_{:?}", operand_type).into();
+    let name: InternedString = format!("overflow_result_{operand_type:?}").into();
     Type::struct_type(
         name,
         vec![
@@ -285,6 +302,10 @@ impl Expr {
 
     pub fn value(&self) -> &ExprValue {
         &self.value
+    }
+
+    pub fn size_of_annotation(&self) -> Option<&Type> {
+        self.size_of_annotation.as_ref()
     }
 
     /// If the expression is an Int constant type, return its value
@@ -398,12 +419,19 @@ impl Expr {
     }
 }
 
+impl Expr {
+    pub fn with_size_of_annotation(mut self, ty: Type) -> Self {
+        self.size_of_annotation = Some(ty);
+        self
+    }
+}
+
 /// Private constructor. Making this a macro allows multiple reference to self in the same call.
 macro_rules! expr {
     ( $value:expr,  $typ:expr) => {{
         let typ = $typ;
         let value = Box::new($value);
-        Expr { value, typ, location: Location::none() }
+        Expr { value, typ, location: Location::none(), size_of_annotation: None }
     }};
 }
 
@@ -411,7 +439,7 @@ macro_rules! expr {
 impl Expr {
     /// `&self`
     pub fn address_of(self) -> Self {
-        assert!(self.can_take_address_of(), "Can't take address of {:?}", self);
+        assert!(self.can_take_address_of(), "Can't take address of {self:?}");
         expr!(AddressOf(self), self.typ.clone().to_pointer())
     }
 
@@ -427,9 +455,7 @@ impl Expr {
             assert_eq!(size as usize, elems.len());
             assert!(
                 elems.iter().all(|x| x.typ == *value_typ),
-                "Array type and value types don't match: \n{:?}\n{:?}",
-                typ,
-                elems
+                "Array type and value types don't match: \n{typ:?}\n{elems:?}"
             );
         } else {
             unreachable!("Can't make an array_val with non-array target type {:?}", typ);
@@ -442,9 +468,7 @@ impl Expr {
             assert_eq!(size as usize, elems.len());
             assert!(
                 elems.iter().all(|x| x.typ == *value_typ),
-                "Vector type and value types don't match: \n{:?}\n{:?}",
-                typ,
-                elems
+                "Vector type and value types don't match: \n{typ:?}\n{elems:?}"
             );
         } else {
             unreachable!("Can't make a vector_val with non-vector target type {:?}", typ);
@@ -484,7 +508,7 @@ impl Expr {
 
     /// `(typ) self`.
     pub fn cast_to(self, typ: Type) -> Self {
-        assert!(self.can_cast_to(&typ), "Can't cast\n\n{:?} ({:?})\n\n{:?}", self, self.typ, typ);
+        assert!(self.can_cast_to(&typ), "Can't cast\n\n{self:?} ({:?})\n\n{typ:?}", self.typ);
         if self.typ == typ {
             self
         } else if typ.is_bool() {
@@ -496,8 +520,8 @@ impl Expr {
     }
 
     /// Casts value to new_typ, only when the current type of value
-    /// is equivalent to new_typ on the given machine (e.g. i32 -> c_int)
-    pub fn cast_to_machine_equivalent_type(self, new_typ: &Type, mm: &MachineModel) -> Expr {
+    /// is equivalent to new_typ on the given target (e.g. i32 -> c_int)
+    pub fn cast_to_target_equivalent_type(self, new_typ: &Type, mm: &MachineModel) -> Expr {
         if self.typ() == new_typ {
             self
         } else {
@@ -507,8 +531,8 @@ impl Expr {
     }
 
     /// Casts arguments to type of function parameters when the corresponding types
-    /// are equivalent on the given machine (e.g. i32 -> c_int)
-    pub fn cast_arguments_to_machine_equivalent_function_parameter_types(
+    /// are equivalent on the given target (e.g. i32 -> c_int)
+    pub fn cast_arguments_to_target_equivalent_function_parameter_types(
         function: &Expr,
         mut arguments: Vec<Expr>,
         mm: &MachineModel,
@@ -518,7 +542,7 @@ impl Expr {
         let mut rval: Vec<_> = parameters
             .iter()
             .map(|parameter| {
-                arguments.remove(0).cast_to_machine_equivalent_type(parameter.typ(), mm)
+                arguments.remove(0).cast_to_target_equivalent_type(parameter.typ(), mm)
             })
             .collect();
 
@@ -636,9 +660,7 @@ impl Expr {
     pub fn call(self, arguments: Vec<Expr>) -> Self {
         assert!(
             Expr::typecheck_call(&self, &arguments),
-            "Function call does not type check:\nfunc: {:?}\nargs: {:?}",
-            self,
-            arguments
+            "Function call does not type check:\nfunc: {self:?}\nargs: {arguments:?}"
         );
         let typ = self.typ().return_type().unwrap().clone();
         expr!(FunctionCall { function: self, arguments }, typ)
@@ -652,9 +674,7 @@ impl Expr {
         let field: InternedString = field.into();
         assert!(
             self.typ.is_struct_tag() || self.typ.is_union_tag(),
-            "Can't apply .member operation to\n\t{:?}\n\t{}",
-            self,
-            field,
+            "Can't apply .member operation to\n\t{self:?}\n\t{field}",
         );
         if let Some(ty) = self.typ.lookup_field_type(field, symbol_table) {
             expr!(Member { lhs: self, field }, ty)
@@ -683,7 +703,7 @@ impl Expr {
         expr!(StatementExpression { statements: ops }, typ)
     }
 
-    /// Internal helper function for Struct initalizer  
+    /// Internal helper function for Struct initalizer
     /// `struct foo the_foo = >>> {.field1 = val1, .field2 = val2, ... } <<<`
     /// ALL fields must be given, including padding
     fn struct_expr_with_explicit_padding(
@@ -695,15 +715,12 @@ impl Expr {
         // Check that each formal field has an value
         assert!(
             fields.iter().zip(values.iter()).all(|(f, v)| f.typ() == *v.typ()),
-            "Error in struct_expr; value type does not match field type.\n\t{:?}\n\t{:?}\n\t{:?}",
-            typ,
-            fields,
-            values
+            "Error in struct_expr; value type does not match field type.\n\t{typ:?}\n\t{fields:?}\n\t{values:?}"
         );
         expr!(Struct { values }, typ)
     }
 
-    /// Struct initializer  
+    /// Struct initializer
     /// `struct foo the_foo = >>> {.field1 = val1, .field2 = val2, ... } <<<`
     /// Note that only the NON padding fields should be explicitly given.
     /// Padding fields are automatically inserted using the type from the `SymbolTable`
@@ -714,25 +731,21 @@ impl Expr {
     ) -> Self {
         assert!(
             typ.is_struct_tag(),
-            "Error in struct_expr; must be given a struct_tag.\n\t{:?}\n\t{:?}",
-            typ,
-            components
+            "Error in struct_expr; must be given a struct_tag.\n\t{typ:?}\n\t{components:?}"
         );
         let fields = typ.lookup_components(symbol_table).unwrap();
         let non_padding_fields: Vec<_> = fields.iter().filter(|x| !x.is_padding()).collect();
         assert_eq!(
             non_padding_fields.len(),
             components.len(),
-            "Error in struct_expr; mismatch in number of fields and components.\n\t{:?}\n\t{:?}",
-            typ,
-            components
+            "Error in struct_expr; mismatch in number of fields and components.\n\t{typ:?}\n\t{components:?}"
         );
 
         // Check that each formal field has an value
         for field in non_padding_fields {
             let field_typ = field.field_typ().unwrap();
             let value = components.get(&field.name()).unwrap();
-            assert_eq!(value.typ(), field_typ);
+            assert_eq!(value.typ(), field_typ, "Unexpected type for {:?}", field.name());
         }
 
         let values = fields
@@ -773,7 +786,7 @@ impl Expr {
         Expr::struct_expr_from_values(typ, values, symbol_table)
     }
 
-    /// Struct initializer  
+    /// Struct initializer
     /// `struct foo the_foo = >>> {field1, field2, ... } <<<`
     /// Note that only the NON padding fields should be explicitly given.
     /// Padding fields are automatically inserted using the type from the `SymbolTable`
@@ -784,28 +797,21 @@ impl Expr {
     ) -> Self {
         assert!(
             typ.is_struct_tag(),
-            "Error in struct_expr; must be given struct_tag.\n\t{:?}\n\t{:?}",
-            typ,
-            non_padding_values
+            "Error in struct_expr; must be given struct_tag.\n\t{typ:?}\n\t{non_padding_values:?}"
         );
         let fields = typ.lookup_components(symbol_table).unwrap();
         let non_padding_fields: Vec<_> = fields.iter().filter(|x| !x.is_padding()).collect();
         assert_eq!(
             non_padding_fields.len(),
             non_padding_values.len(),
-            "Error in struct_expr; mismatch in number of fields and values.\n\t{:?}\n\t{:?}",
-            typ,
-            non_padding_values
+            "Error in struct_expr; mismatch in number of fields and values.\n\t{typ:?}\n\t{non_padding_values:?}"
         );
         assert!(
             non_padding_fields
                 .iter()
                 .zip(non_padding_values.iter())
                 .all(|(f, v)| f.field_typ().unwrap() == v.typ()),
-            "Error in struct_expr; value type does not match field type.\n\t{:?}\n\t{:?}\n\t{:?}",
-            typ,
-            non_padding_fields,
-            non_padding_values
+            "Error in struct_expr; value type does not match field type.\n\t{typ:?}\n\t{non_padding_fields:?}\n\t{non_padding_values:?}"
         );
 
         let values = fields
@@ -816,7 +822,7 @@ impl Expr {
         Expr::struct_expr_with_explicit_padding(typ, fields, values)
     }
 
-    /// Struct initializer  
+    /// Struct initializer
     /// `struct foo the_foo = >>> {field1, padding2, field3, ... } <<<`
     /// Note that padding fields should be explicitly given.
     /// This would be used when the values and padding have already been combined,
@@ -828,28 +834,28 @@ impl Expr {
     ) -> Self {
         assert!(
             typ.is_struct_tag() || typ.is_struct(),
-            "Error in struct_expr; must be given struct.\n\t{:?}\n\t{:?}",
-            typ,
-            values
+            "Error in struct_expr; must be given struct.\n\t{typ:?}\n\t{values:?}"
         );
         let typ = typ.aggr_tag().unwrap();
         let fields = typ.lookup_components(symbol_table).unwrap();
         assert_eq!(
             fields.len(),
             values.len(),
-            "Error in struct_expr; mismatch in number of padded fields and padded values.\n\t{:?}\n\t{:?}",
-            typ,
-            values
+            "Error in struct_expr; mismatch in number of padded fields and padded values.\n\t{typ:?}\n\t{values:?}"
         );
         assert!(
             fields.iter().zip(values.iter()).all(|(f, v)| &f.typ() == v.typ()),
-            "Error in struct_expr; value type does not match field type.\n\t{:?}\n\t{:?}\n\t{:?}",
-            typ,
-            fields,
-            values
+            "Error in struct_expr; value type does not match field type.\n\t{typ:?}\n\t{fields:?}\n\t{values:?}"
         );
 
         Expr::struct_expr_with_explicit_padding(typ, fields, values)
+    }
+
+    /// Initializer for a zero sized type (ZST).
+    /// Since this is a ZST, we call nondet to simplify everything.
+    pub fn init_unit(typ: Type, symbol_table: &SymbolTable) -> Self {
+        assert_eq!(typ.sizeof_in_bits(symbol_table), 0);
+        Expr::nondet(typ)
     }
 
     /// `identifier`
@@ -882,7 +888,7 @@ impl Expr {
         self.transmute_to(t, st)
     }
 
-    /// Union initializer  
+    /// Union initializer
     /// `union foo the_foo = >>> {.field = value } <<<`
     pub fn union_expr<T: Into<InternedString>>(
         typ: Type,
@@ -930,16 +936,12 @@ impl Expr {
             Bitnand => lhs.typ == rhs.typ && lhs.typ.is_integer(),
             // Comparisons
             Ge | Gt | Le | Lt => {
-                lhs.typ == rhs.typ
-                    && (lhs.typ.is_numeric() || lhs.typ.is_pointer() || lhs.typ.is_vector())
+                lhs.typ == rhs.typ && (lhs.typ.is_numeric() || lhs.typ.is_pointer())
             }
             // Equalities
             Equal | Notequal => {
                 lhs.typ == rhs.typ
-                    && (lhs.typ.is_c_bool()
-                        || lhs.typ.is_integer()
-                        || lhs.typ.is_pointer()
-                        || lhs.typ.is_vector())
+                    && (lhs.typ.is_c_bool() || lhs.typ.is_integer() || lhs.typ.is_pointer())
             }
             // Floating Point Equalities
             IeeeFloatEqual | IeeeFloatNotequal => lhs.typ == rhs.typ && lhs.typ.is_floating_point(),
@@ -953,6 +955,11 @@ impl Expr {
                     || (lhs.typ.is_pointer() && rhs.typ.is_integer())
             }
             ROk => lhs.typ.is_pointer() && rhs.typ.is_c_size_t(),
+            VectorEqual | VectorNotequal | VectorGe | VectorLe | VectorGt | VectorLt => {
+                unreachable!(
+                    "vector comparison operators must be typechecked by `typecheck_vector_cmp_expr`"
+                )
+            }
         }
     }
 
@@ -975,21 +982,9 @@ impl Expr {
             // Bitwise ops
             Bitand | Bitnand | Bitor | Bitxor => lhs.typ.clone(),
             // Comparisons
-            Ge | Gt | Le | Lt => {
-                if lhs.typ.is_vector() {
-                    lhs.typ.clone()
-                } else {
-                    Type::bool()
-                }
-            }
+            Ge | Gt | Le | Lt => Type::bool(),
             // Equalities
-            Equal | Notequal => {
-                if lhs.typ.is_vector() {
-                    lhs.typ.clone()
-                } else {
-                    Type::bool()
-                }
-            }
+            Equal | Notequal => Type::bool(),
             // Floating Point Equalities
             IeeeFloatEqual | IeeeFloatNotequal => Type::bool(),
             // Overflow flags
@@ -999,18 +994,53 @@ impl Expr {
                 Type::struct_tag(struct_type.tag().unwrap())
             }
             ROk => Type::bool(),
+            // Vector comparisons
+            VectorEqual | VectorNotequal | VectorGe | VectorLe | VectorGt | VectorLt => {
+                unreachable!(
+                    "return type for vector comparison operators depends on the place type"
+                )
+            }
         }
     }
+
+    /// Comparison operators for SIMD vectors aren't typechecked as regular
+    /// comparison operators. First, the return type depends on the place's type
+    /// (i.e., the variable or expression type for the result).
+    ///
+    /// In addition, the return type must have:
+    ///  1. The same length (number of elements) as the operand types.
+    ///  2. An integer base type (or just "boolean"-y, as mentioned in
+    ///     <https://github.com/rust-lang/rfcs/blob/master/text/1199-simd-infrastructure.md#comparisons>).
+    ///     The signedness doesn't matter, as the result for each element is
+    ///     either "all ones" (true) or "all zeros" (false).
+    /// For example, one can use `simd_eq` on two `f64x4` vectors and assign the
+    /// result to a `u64x4` vector. But it's not possible to assign it to: (1) a
+    /// `u64x2` because they don't have the same length; or (2) another `f64x4`
+    /// vector.
+    fn typecheck_vector_cmp_expr(lhs: &Expr, rhs: &Expr, ret_typ: &Type) -> bool {
+        lhs.typ.is_vector()
+            && lhs.typ == rhs.typ
+            && lhs.typ.len() == ret_typ.len()
+            && ret_typ.base_type().unwrap().is_integer()
+    }
+
     /// self op right;
     pub fn binop(self, op: BinaryOperator, rhs: Expr) -> Expr {
         assert!(
             Expr::typecheck_binop_args(op, &self, &rhs),
-            "BinaryOperation Expression does not typecheck {:?} {:?} {:?}",
-            op,
-            self,
-            rhs
+            "BinaryOperation Expression does not typecheck {op:?} {self:?} {rhs:?}"
         );
         expr!(BinOp { op, lhs: self, rhs }, Expr::binop_return_type(op, &self, &rhs))
+    }
+
+    /// Like `binop`, but receives an additional parameter `ret_typ` with the expected
+    /// return type for the place, which is used as the return type.
+    pub fn vector_cmp(self, op: BinaryOperator, rhs: Expr, ret_typ: Type) -> Expr {
+        assert!(
+            Expr::typecheck_vector_cmp_expr(&self, &rhs, &ret_typ),
+            "vector comparison expression does not typecheck {self:?} {rhs:?} {ret_typ:?}",
+        );
+        expr!(BinOp { op, lhs: self, rhs }, ret_typ)
     }
 
     /// `__builtin_add_overflow_p(self,e)
@@ -1161,6 +1191,39 @@ impl Expr {
     /// `__CPROVER_r_ok(self, e)`
     pub fn r_ok(self, e: Expr) -> Expr {
         self.binop(ROk, e)
+    }
+
+    // Regular comparison operators (e.g., `==` or `<`) don't work over SIMD vectors.
+    // Instead, we must use the dedicated `vector-<op>` Irep operators.
+
+    /// `self == e` for SIMD vectors
+    pub fn vector_eq(self, e: Expr, ret_typ: Type) -> Expr {
+        self.vector_cmp(VectorEqual, e, ret_typ)
+    }
+
+    /// `self != e` for SIMD vectors
+    pub fn vector_neq(self, e: Expr, ret_typ: Type) -> Expr {
+        self.vector_cmp(VectorNotequal, e, ret_typ)
+    }
+
+    /// `self >= e` for SIMD vectors
+    pub fn vector_ge(self, e: Expr, ret_typ: Type) -> Expr {
+        self.vector_cmp(VectorGe, e, ret_typ)
+    }
+
+    /// `self <= e` for SIMD vectors
+    pub fn vector_le(self, e: Expr, ret_typ: Type) -> Expr {
+        self.vector_cmp(VectorLe, e, ret_typ)
+    }
+
+    /// `self > e` for SIMD vectors
+    pub fn vector_gt(self, e: Expr, ret_typ: Type) -> Expr {
+        self.vector_cmp(VectorGt, e, ret_typ)
+    }
+
+    /// `self < e` for SIMD vectors
+    pub fn vector_lt(self, e: Expr, ret_typ: Type) -> Expr {
+        self.vector_cmp(VectorLt, e, ret_typ)
     }
 
     // Expressions defined on top of other expressions
@@ -1347,9 +1410,9 @@ impl Expr {
         ArithmeticOverflowResult { result, overflowed }
     }
 
-    /// Uses CBMC's add-with-overflow operation that performs a single addition
+    /// Uses CBMC's [binop]-with-overflow operation that performs a single arithmetic
     /// operation
-    /// `struct (T, bool) overflow(+, self, e)` where `T` is the type of `self`
+    /// `struct (T, bool) overflow(binop, self, e)` where `T` is the type of `self`
     /// Pseudocode:
     /// ```
     /// struct overflow_result_t {
@@ -1361,6 +1424,14 @@ impl Expr {
     /// overflow_result.overflowed = raw_result > maximum value of T;
     /// return overflow_result;
     /// ```
+    pub fn overflow_op(self, op: BinaryOperator, e: Expr) -> Expr {
+        assert!(
+            matches!(op, OverflowResultMinus | OverflowResultMult | OverflowResultPlus),
+            "Expected an overflow operation, but found: `{op:?}`"
+        );
+        self.binop(op, e)
+    }
+
     pub fn add_overflow_result(self, e: Expr) -> Expr {
         self.binop(OverflowResultPlus, e)
     }
@@ -1379,7 +1450,7 @@ impl Expr {
         } else if self.typ().is_array_like() {
             self.index_array(idx)
         } else {
-            panic!("Can't index: {:?}", self)
+            panic!("Can't index: {self:?}")
         }
     }
 
@@ -1392,6 +1463,8 @@ impl Expr {
 
     /// `ArithmeticOverflowResult r; >>>r.overflowed = builtin_sub_overflow(self, e, &r.result)<<<`
     pub fn mul_overflow(self, e: Expr) -> ArithmeticOverflowResult {
+        // TODO: We should replace these calls by *overflow_result.
+        // https://github.com/model-checking/kani/issues/1483
         let result = self.clone().mul(e.clone());
         let overflowed = self.mul_overflow_p(e);
         ArithmeticOverflowResult { result, overflowed }
@@ -1414,9 +1487,7 @@ impl Expr {
     pub fn reinterpret_cast(self, t: Type) -> Expr {
         assert!(
             self.can_take_address_of(),
-            "Can't take address of {:?} when coercing to {:?}",
-            self,
-            t
+            "Can't take address of {self:?} when coercing to {t:?}"
         );
         self.address_of().cast_to(t.to_pointer()).dereference()
     }

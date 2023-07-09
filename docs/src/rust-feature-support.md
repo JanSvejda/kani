@@ -54,7 +54,7 @@ Reference | Feature | Support | Notes |
 8.2.18 | Await expressions | No | See [Notes - Concurrency](#concurrency) |
 9 | Patterns | Partial | [#707](https://github.com/model-checking/kani/issues/707) |
 10.1.1 | Boolean type | Yes | |
-10.1.2 | Numeric types | Yes | |
+10.1.2 | Numeric types | Yes | | See [Notes - Floats](#floating-point-operations)
 10.1.3 | Textual types | Yes | |
 10.1.4 | Never type | Yes | |
 10.1.5 | Tuple types | Yes | |
@@ -144,20 +144,8 @@ compiles as if it was sequential code.
 
 ### Standard library functions
 
-At present, Kani is able to link in functions from the standard library but the
-generated code will not contain them unless they are generic, intrinsics,
-inlined or macros. Missing functions are treated in a similar way to [unsupported
-features](#code-generation-for-unsupported-features).
-This results in verification failures if a call to one of these missing functions
-is reachable.
-
-We've done some experiments to embed the standard library into the generated
-code, but this causes verification times to increase significantly. As of now,
-we've not been able to find a simple solution for [this
-issue](https://github.com/model-checking/kani/issues/581), but we have some
-ideas for future work in this direction. At present, Kani
-[overrides](./overrides.md) a few common functions (e.g., print macros) as
-a workaround.
+Kani [overrides](./overrides.md) a few common functions
+(e.g., print macros) to provide a more verification friendly implementation.
 
 ### Advanced features
 
@@ -166,9 +154,7 @@ not formally defined which makes it harder to ensure that we can properly model
 all their use cases.
 
 In particular, there are some outstanding issues to note here:
- * Unimplemented `PointerCast::ClosureFnPointer` in
-   [#274](https://github.com/model-checking/kani/issues/274) and `Variant` case
-   in projections type in
+ * Sanity check `Variant` type in projections
    [#448](https://github.com/model-checking/kani/issues/448).
  * Unexpected fat pointer results in
    [#277](https://github.com/model-checking/kani/issues/277),
@@ -212,3 +198,15 @@ related to [advanced features](#advanced-features).
 
 Please refer to [Intrinsics](rust-feature-support/intrinsics.md) for information
 on the current support in Kani for Rust compiler intrinsics.
+
+### Floating point operations
+
+Kani supports floating point numbers, but some supported operations on floats are "over-approximated."
+These are the trigonometric functions like `sin` and `cos` and the `sqrt` function as well.
+This means the verifier can raise errors that cannot actually happen when the code is run normally.
+For instance, ([#1342](https://github.com/model-checking/kani/issues/1342)) the `sin`/`cos` functions basically return a nondeterministic value between -1 and 1.
+In other words, they largely ignore their input and give very conservative answers.
+This range certainly includes the "real" value, so proof soundness is still preserved, but it means Kani could raise spurious errors that cannot actually happen.
+This makes Kani unsuitable for verifying some kinds of properties (e.g. precision) about numerical algorithms.
+Proofs that fail because of this problem can sometimes be repaired by introducing "stubs" for these functions that return a more acceptable approximation.
+However, note that the actual behavior of these functions can vary by platform/os/architecture/compiler, so introducing an "overly precise" approximation may introduce unsoundness: actual system behavior may produce different values from the stub's approximation.

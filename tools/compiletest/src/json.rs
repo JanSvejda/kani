@@ -78,14 +78,13 @@ pub fn extract_rendered(output: &str) -> String {
                     None
                 } else {
                     print!(
-                        "failed to decode compiler output as json: line: {}\noutput: {}",
-                        line, output
+                        "failed to decode compiler output as json: line: {line}\noutput: {output}"
                     );
                     panic!()
                 }
             } else {
                 // preserve non-JSON lines, such as ICEs
-                Some(format!("{}\n", line))
+                Some(format!("{line}\n"))
             }
         })
         .collect()

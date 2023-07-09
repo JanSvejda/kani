@@ -1,28 +1,24 @@
 ![](./kani-logo.png)
+[![Kani regression](https://github.com/model-checking/kani/actions/workflows/kani.yml/badge.svg)](https://github.com/model-checking/kani/actions/workflows/kani.yml)
+[![Nightly: CBMC Latest](https://github.com/model-checking/kani/actions/workflows/cbmc-latest.yml/badge.svg)](https://github.com/model-checking/kani/actions/workflows/cbmc-latest.yml)
 
 The Kani Rust Verifier is a bit-precise model checker for Rust.
 
-Kani is particularly useful for verifying unsafe code in Rust, where many of the language's usual guarantees are no longer checked by the compiler.
+Kani is particularly useful for verifying unsafe code blocks in Rust, where the "[unsafe superpowers](https://doc.rust-lang.org/stable/book/ch19-01-unsafe-rust.html#unsafe-superpowers)" are unchecked by the compiler.
+___
 Kani verifies:
  * Memory safety (e.g., null pointer dereferences)
  * User-specified assertions (i.e., `assert!(...)`)
  * The absence of panics (e.g., `unwrap()` on `None` values)
  * The absence of some types of unexpected behavior (e.g., arithmetic overflows)
 
-## GitHub Action
-
-Use Kani in your CI with `model-checking/kani@VERSION`. See the
-[GitHub Action section in the Kani
-book](https://model-checking.github.io/kani/install-github-ci.html)
-for details.
-
 ## Installation
 
-To install the latest version of Kani, run:
+To install the latest version of Kani ([Rust 1.58+; Linux or Mac](https://model-checking.github.io/kani/install-guide.html)), run:
 
 ```bash
 cargo install --locked kani-verifier
-cargo-kani setup
+cargo kani setup
 ```
 
 See [the installation guide](https://model-checking.github.io/kani/install-guide.html) for more details.
@@ -53,6 +49,13 @@ fn check_my_property() {
 Kani will then try to prove that all valid inputs produce acceptable outputs, without panicking or executing unexpected behavior.
 Otherwise Kani will generate a trace that points to the failure.
 We recommend following [the tutorial](https://model-checking.github.io/kani/kani-tutorial.html) to learn more about how to use Kani.
+
+## GitHub Action
+
+Use Kani in your CI with `model-checking/kani-github-action@VERSION`. See the
+[GitHub Action section in the Kani
+book](https://model-checking.github.io/kani/install-github-ci.html)
+for details.
 
 ## Security
 See [SECURITY](https://github.com/model-checking/kani/security/policy) for more information.

@@ -9,7 +9,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use crate::util::PathBufExt;
+use std::time::Duration;
 use test::ColorConfig;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -17,6 +17,8 @@ pub enum Mode {
     Kani,
     KaniFixme,
     CargoKani,
+    CargoKaniTest, // `cargo kani --tests`. This is temporary and should be removed when s2n-quic moves --tests to `Cargo.toml`.
+    Exec,
     Expected,
     Stub,
 }
@@ -28,6 +30,8 @@ impl FromStr for Mode {
             "kani" => Ok(Kani),
             "kani-fixme" => Ok(KaniFixme),
             "cargo-kani" => Ok(CargoKani),
+            "cargo-kani-test" => Ok(CargoKaniTest),
+            "exec" => Ok(Exec),
             "expected" => Ok(Expected),
             "stub-tests" => Ok(Stub),
             _ => Err(()),
@@ -41,6 +45,8 @@ impl fmt::Display for Mode {
             Kani => "kani",
             KaniFixme => "kani-fixme",
             CargoKani => "cargo-kani",
+            CargoKaniTest => "cargo-kani-test",
+            Exec => "exec",
             Expected => "expected",
             Stub => "stub-tests",
         };
@@ -125,10 +131,20 @@ pub struct Config {
     /// Whether to rerun tests even if the inputs are unchanged.
     pub force_rerun: bool,
 
-    /// Allow us to run the regression with the mir linker enabled by default. For that, set
-    /// `RUSTFLAGS=--cfg=mir_linker` while compiling `compiletest`.
-    /// Remove this as part of <https://github.com/model-checking/kani/issues/1677>
-    pub mir_linker: bool,
+    /// Timeout duration for each test.
+    pub timeout: Option<Duration>,
+
+    /// Whether we will abort execution when a failure occurs.
+    /// When set to false, this will execute the entire test suite regardless of any failure.
+    pub fail_fast: bool,
+
+    /// Whether we will run the tests or not.
+    pub dry_run: bool,
+
+    /// Whether we should update expected tests when there is a mismatch. This is helpful for
+    /// updating multiple tests. Users should still manually edit the files after to only keep
+    /// relevant expectations.
+    pub fix_expected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -145,22 +161,21 @@ pub fn output_relative_path(config: &Config, relative_dir: &Path) -> PathBuf {
     config.build_base.join(relative_dir)
 }
 
-/// Generates a unique name for the test, such as `testname.revision`.
-pub fn output_testname_unique(testpaths: &TestPaths, revision: Option<&str>) -> PathBuf {
-    PathBuf::from(&testpaths.file.file_stem().unwrap()).with_extra_extension(revision.unwrap_or(""))
+/// Generates a unique name for the test.
+pub fn output_testname_unique(testpaths: &TestPaths) -> PathBuf {
+    PathBuf::from(&testpaths.file.file_stem().unwrap())
 }
 
 /// Absolute path to the directory where all output for the given
-/// test/revision should reside. Example:
-///   /path/to/build/host-triple/test/ui/relative/testname.revision/
-pub fn output_base_dir(config: &Config, testpaths: &TestPaths, revision: Option<&str>) -> PathBuf {
-    output_relative_path(config, &testpaths.relative_dir)
-        .join(output_testname_unique(testpaths, revision))
+/// test should reside. Example:
+///   /path/to/build/host-triple/test/ui/relative/testname/
+pub fn output_base_dir(config: &Config, testpaths: &TestPaths) -> PathBuf {
+    output_relative_path(config, &testpaths.relative_dir).join(output_testname_unique(testpaths))
 }
 
 /// Absolute path to the base filename used as output for the given
-/// test/revision. Example:
-///   /path/to/build/host-triple/test/ui/relative/testname.revision.mode/testname
-pub fn output_base_name(config: &Config, testpaths: &TestPaths, revision: Option<&str>) -> PathBuf {
-    output_base_dir(config, testpaths, revision).join(testpaths.file.file_stem().unwrap())
+/// test. Example:
+///   /path/to/build/host-triple/test/ui/relative/testname.mode/testname
+pub fn output_base_name(config: &Config, testpaths: &TestPaths) -> PathBuf {
+    output_base_dir(config, testpaths).join(testpaths.file.file_stem().unwrap())
 }

@@ -1,0 +1,6 @@
+CARGO_ENCODED_RUSTFLAGS=
+cargo +nightly
+Running: `goto-cc
+Running: `goto-instrument
+Checking harness dummy_harness...
+Running: `cbmc

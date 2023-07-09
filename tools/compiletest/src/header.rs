@@ -34,27 +34,20 @@ impl TestProps {
         }
     }
 
-    pub fn from_file(testfile: &Path, cfg: Option<&str>, config: &Config) -> Self {
+    pub fn from_file(testfile: &Path, config: &Config) -> Self {
         let mut props = TestProps::new();
-        props.load_from(testfile, cfg, config);
+        props.load_from(testfile, config);
 
         props
     }
 
-    /// Loads properties from `testfile` into `props`. If a property is
-    /// tied to a particular revision `foo` (indicated by writing
-    /// `//[foo]`), then the property is ignored unless `cfg` is
-    /// `Some("foo")`.
-    fn load_from(&mut self, testfile: &Path, cfg: Option<&str>, config: &Config) {
+    /// Loads properties from `testfile` into `props`.
+    fn load_from(&mut self, testfile: &Path, config: &Config) {
         let mut has_edition = false;
         if !testfile.is_dir() {
             let file = File::open(testfile).unwrap();
 
-            iter_header(testfile, file, &mut |revision, ln| {
-                if revision.is_some() && revision != cfg {
-                    return;
-                }
-
+            iter_header(testfile, file, &mut |ln| {
                 if let Some(flags) = config.parse_compile_flags(ln) {
                     self.compile_flags.extend(flags.split_whitespace().map(|s| s.to_owned()));
                 }
@@ -68,7 +61,7 @@ impl TestProps {
                 }
 
                 if let Some(edition) = config.parse_edition(ln) {
-                    self.compile_flags.push(format!("--edition={}", edition));
+                    self.compile_flags.push(format!("--edition={edition}"));
                     has_edition = true;
                 }
 
@@ -77,7 +70,7 @@ impl TestProps {
         }
 
         if let (Some(edition), false) = (&config.edition, has_edition) {
-            self.compile_flags.push(format!("--edition={}", edition));
+            self.compile_flags.push(format!("--edition={edition}"));
         }
     }
 
@@ -93,7 +86,7 @@ impl TestProps {
     }
 }
 
-fn iter_header<R: Read>(testfile: &Path, rdr: R, it: &mut dyn FnMut(Option<&str>, &str)) {
+fn iter_header<R: Read>(testfile: &Path, rdr: R, it: &mut dyn FnMut(&str)) {
     if testfile.is_dir() {
         return;
     }
@@ -116,7 +109,7 @@ fn iter_header<R: Read>(testfile: &Path, rdr: R, it: &mut dyn FnMut(Option<&str>
         if ln.starts_with("fn") || ln.starts_with("mod") {
             return;
         } else if let Some(rest) = ln.strip_prefix(comment) {
-            it(None, rest.trim_start());
+            it(rest.trim_start());
         }
     }
 }
@@ -131,7 +124,7 @@ impl Config {
     fn parse_kani_step_fail_directive(&self, line: &str) -> Option<KaniFailStep> {
         let check_kani = |mode: &str| {
             if self.mode != Mode::Kani {
-                panic!("`kani-{}-fail` header is only supported in Kani tests", mode);
+                panic!("`kani-{mode}-fail` header is only supported in Kani tests");
             }
         };
         if self.parse_name_directive(line, "kani-check-fail") {
@@ -186,23 +179,18 @@ pub fn make_test_description<R: Read>(
     name: test::TestName,
     path: &Path,
     src: R,
-    cfg: Option<&str>,
 ) -> test::TestDesc {
-    let mut ignore = false;
     let mut should_fail = false;
-    let mut ignore_message = None;
 
-    if config.mode == Mode::Kani || config.mode == Mode::Stub {
-        // If the path to the test contains "fixme" or "ignore", skip it.
-        let file_path = path.to_str().unwrap();
-        (ignore, ignore_message) = if file_path.contains("fixme") {
-            (true, Some("fixme test"))
-        } else if file_path.contains("ignore") {
-            (true, Some("ignore test"))
-        } else {
-            (false, None)
-        };
-    }
+    // If the path to the test contains "fixme" or "ignore", skip it.
+    let file_path = path.to_str().unwrap();
+    let (mut ignore, mut ignore_message) = if file_path.contains("fixme") {
+        (true, Some("fixme test"))
+    } else if file_path.contains("ignore") {
+        (true, Some("ignore test"))
+    } else {
+        (false, None)
+    };
 
     // The `KaniFixme` mode runs tests that are ignored in the `kani` suite
     if config.mode == Mode::KaniFixme {
@@ -215,18 +203,17 @@ pub fn make_test_description<R: Read>(
 
         // If the base name does NOT contain "fixme" or "ignore", we skip it.
         // All "fixme" tests are expected to fail
-        (ignore, ignore_message) = if base_name.contains("fixme") || base_name.contains("ignore") {
+        (ignore, ignore_message) = if base_name.contains("fixme") {
             (false, None)
+        } else if base_name.contains("ignore") {
+            (true, Some("ignore test"))
         } else {
             (true, Some("regular test"))
         };
         should_fail = true;
     }
 
-    iter_header(path, src, &mut |revision, ln| {
-        if revision.is_some() && revision != cfg {
-            return;
-        }
+    iter_header(path, src, &mut |ln| {
         should_fail |= config.parse_name_directive(ln, "should-fail");
     });
 
@@ -246,5 +233,11 @@ pub fn make_test_description<R: Read>(
         compile_fail: false,
         no_run: false,
         test_type: test::TestType::Unknown,
+        // Enter dummy values since the test doesn't have a line per-se.
+        source_file: "unknown_file",
+        start_line: 0,
+        start_col: 0,
+        end_line: 0,
+        end_col: 0,
     }
 }

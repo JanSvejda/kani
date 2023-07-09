@@ -12,14 +12,15 @@ extern crate test;
 
 use crate::common::{output_base_dir, output_relative_path};
 use crate::common::{Config, Mode, TestPaths};
-use crate::util::{logv, top_level};
+use crate::util::{logv, print_msg, top_level};
 use getopts::Options;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::str::FromStr;
+use std::time::{Duration, SystemTime};
 use test::ColorConfig;
 use tracing::*;
 use walkdir::WalkDir;
@@ -83,11 +84,17 @@ pub fn parse_config(args: Vec<String>) -> Config {
         .optopt("", "host", "the host to build for", "HOST")
         .optflag("", "force-rerun", "rerun tests even if the inputs are unchanged")
         .optflag("h", "help", "show this message")
-        .optopt("", "edition", "default Rust edition", "EDITION");
+        .optopt("", "edition", "default Rust edition", "EDITION")
+        .optopt("", "timeout", "the timeout for each test in seconds", "TIMEOUT")
+        .optflag("", "no-fail-fast", "run all tests regardless of failure")
+        .optflag("", "dry-run", "don't actually run the tests")
+        .optflag("", "fix-expected",
+        "override all expected files that did not match the output. Tests will NOT fail when there is a mismatch")
+    ;
 
     let (argv0, args_) = args.split_first().unwrap();
     if args.len() == 1 || args[1] == "-h" || args[1] == "--help" {
-        let message = format!("Usage: {} [OPTIONS] [TESTNAME...]", argv0);
+        let message = format!("Usage: {argv0} [OPTIONS] [TESTNAME...]");
         println!("{}", opts.usage(&message));
         println!();
         panic!()
@@ -95,11 +102,11 @@ pub fn parse_config(args: Vec<String>) -> Config {
 
     let matches = &match opts.parse(args_) {
         Ok(m) => m,
-        Err(f) => panic!("{:?}", f),
+        Err(f) => panic!("{f:?}"),
     };
 
     if matches.opt_present("h") || matches.opt_present("help") {
-        let message = format!("Usage: {} [OPTIONS]  [TESTNAME...]", argv0);
+        let message = format!("Usage: {argv0} [OPTIONS]  [TESTNAME...]");
         println!("{}", opts.usage(&message));
         println!();
         panic!()
@@ -110,7 +117,7 @@ pub fn parse_config(args: Vec<String>) -> Config {
             Some(s) => PathBuf::from(&s),
             None => {
                 let mut root_folder = top_level().expect(
-                    format!("Cannot find root directory. Please provide --{} option.", nm).as_str(),
+                    format!("Cannot find root directory. Please provide --{nm} option.").as_str(),
                 );
                 default.iter().for_each(|f| root_folder.push(f));
                 root_folder
@@ -123,13 +130,19 @@ pub fn parse_config(args: Vec<String>) -> Config {
         Some("auto") | None => ColorConfig::AutoColor,
         Some("always") => ColorConfig::AlwaysColor,
         Some("never") => ColorConfig::NeverColor,
-        Some(x) => panic!("argument for --color must be auto, always, or never, but found `{}`", x),
+        Some(x) => panic!("argument for --color must be auto, always, or never, but found `{x}`"),
     };
 
     let suite = matches.opt_str("suite").unwrap();
     let src_base = opt_path(matches, "src-base", &["tests", suite.as_str()]);
     let run_ignored = matches.opt_present("ignored");
     let mode = matches.opt_str("mode").unwrap().parse().expect("invalid mode");
+    let timeout = matches.opt_str("timeout").map(|val| {
+        Duration::from_secs(
+            u64::from_str(&val)
+                .expect("Unexpected timeout format. Expected a positive number but found {val}"),
+        )
+    });
 
     Config {
         src_base,
@@ -147,7 +160,10 @@ pub fn parse_config(args: Vec<String>) -> Config {
         color,
         edition: matches.opt_str("edition"),
         force_rerun: matches.opt_present("force-rerun"),
-        mir_linker: cfg!(mir_linker),
+        fail_fast: !matches.opt_present("no-fail-fast"),
+        dry_run: matches.opt_present("dry-run"),
+        fix_expected: matches.opt_present("fix-expected"),
+        timeout,
     }
 }
 
@@ -164,7 +180,18 @@ pub fn log_config(config: &Config) {
     logv(c, format!("host: {}", config.host));
     logv(c, format!("verbose: {}", config.verbose));
     logv(c, format!("quiet: {}", config.quiet));
-    logv(c, format!("mir_linker: {}", config.mir_linker));
+    logv(c, format!("timeout: {:?}", config.timeout));
+    logv(c, format!("fail-fast: {:?}", config.fail_fast));
+    logv(c, format!("dry-run: {:?}", config.dry_run));
+    logv(c, format!("fix-expected: {:?}", config.fix_expected));
+    logv(
+        c,
+        format!(
+            "parallelism: RUST_TEST_THREADS={:?}, available_parallelism={}",
+            env::var("RUST_TEST_THREADS").ok(),
+            std::thread::available_parallelism().unwrap()
+        ),
+    );
     logv(c, "\n".to_string());
 }
 
@@ -205,6 +232,15 @@ pub fn run_tests(config: Config) {
         make_tests(c, &mut tests);
     }
 
+    if config.dry_run {
+        print_msg(&config, format!("Number of Tests: {}", tests.len()));
+        for test in tests {
+            let ignore = if test.desc.ignore ^ config.run_ignored { "ignore" } else { "" };
+            print_msg(&config, format!(" - {} ... {}", test.desc.name.as_slice(), ignore));
+        }
+        return;
+    }
+
     let res = test::run_tests_console(&opts, tests);
     match res {
         Ok(true) => {}
@@ -230,7 +266,7 @@ pub fn run_tests(config: Config) {
             //
             // This should realistically "never" happen, so don't try to make
             // this a pretty error message.
-            panic!("I/O failure during tests: {:?}", e);
+            panic!("I/O failure during tests: {e:?}");
         }
     }
 }
@@ -257,6 +293,7 @@ pub fn test_opts(config: &Config) -> test::TestOpts {
         list: false,
         options: test::Options::new(),
         time_options: None,
+        fail_fast: config.fail_fast,
         force_run_in_process: false,
     }
 }
@@ -299,9 +336,10 @@ fn collect_tests_from_dir(
     tests: &mut Vec<test::TestDescAndFn>,
 ) -> io::Result<()> {
     match config.mode {
-        Mode::CargoKani => {
+        Mode::CargoKani | Mode::CargoKaniTest => {
             collect_expected_tests_from_dir(config, dir, relative_dir_path, inputs, tests)
         }
+        Mode::Exec => collect_exec_tests_from_dir(config, dir, relative_dir_path, inputs, tests),
         _ => collect_rs_tests_from_dir(config, dir, relative_dir_path, inputs, tests),
     }
 }
@@ -327,7 +365,7 @@ fn collect_expected_tests_from_dir(
     // output directory corresponding to each to avoid race conditions during
     // the testing phase. We immediately return after adding the tests to avoid
     // treating `*.rs` files as tests.
-    assert_eq!(config.mode, Mode::CargoKani);
+    assert!(config.mode == Mode::CargoKani || config.mode == Mode::CargoKaniTest);
 
     let has_cargo_toml = dir.join("Cargo.toml").exists();
     for file in fs::read_dir(dir)? {
@@ -340,7 +378,7 @@ fn collect_expected_tests_from_dir(
             fs::create_dir_all(&build_dir.join(file_path.file_stem().unwrap())).unwrap();
             let paths =
                 TestPaths { file: file_path, relative_dir: relative_dir_path.to_path_buf() };
-            tests.extend(make_test(config, &paths, inputs));
+            tests.push(make_test(config, &paths, inputs));
         } else if file_path.is_dir() {
             // recurse on subdirectory
             let relative_file_path = relative_dir_path.join(file.file_name());
@@ -353,6 +391,51 @@ fn collect_expected_tests_from_dir(
                 tests,
             )?;
         }
+    }
+    Ok(())
+}
+
+/// Collect `exec` tests from a directory.
+///
+/// Note that this method isn't recursive like
+/// `collect_expected_tests_from_dir`, as it allows us to ensure that newly
+/// added tests are running. Hence, each test must be in its own folder.
+fn collect_exec_tests_from_dir(
+    config: &Config,
+    dir: &Path,
+    relative_dir_path: &Path,
+    inputs: &Stamp,
+    tests: &mut Vec<test::TestDescAndFn>,
+) -> io::Result<()> {
+    // If we find a test `foo/bar.rs`, we have to build the
+    // output directory `$build/foo` so we can write
+    // `$build/foo/bar` into it. We do this *now* in this
+    // sequential loop because otherwise, if we do it in the
+    // tests themselves, they race for the privilege of
+    // creating the directories and sometimes fail randomly.
+    let build_dir = output_relative_path(config, relative_dir_path);
+    fs::create_dir_all(&build_dir).unwrap();
+
+    // Ensure the mode we're running is `Mode::Exec`
+    assert!(config.mode == Mode::Exec);
+
+    // Each test is expected to be in its own folder (i.e., we don't do recursion)
+    for file in fs::read_dir(dir)? {
+        // Look for `config.yml` file in folder
+        let file = file?;
+        let file_path = file.path();
+        let has_config_yml = file_path.join("config.yml").exists();
+        if !has_config_yml {
+            fatal_error(&format!(
+                "couldn't find `config.yml` file for `exec` test in `{}`",
+                file_path.display()
+            ));
+        }
+
+        // Create directory for test and add it to the tests to be run
+        fs::create_dir_all(&build_dir.join(file_path.file_stem().unwrap())).unwrap();
+        let paths = TestPaths { file: file_path, relative_dir: relative_dir_path.to_path_buf() };
+        tests.push(make_test(config, &paths, inputs));
     }
     Ok(())
 }
@@ -383,7 +466,7 @@ fn collect_rs_tests_from_dir(
             debug!("found test file: {:?}", file_path.display());
             let paths =
                 TestPaths { file: file_path, relative_dir: relative_dir_path.to_path_buf() };
-            tests.extend(make_test(config, &paths, inputs))
+            tests.push(make_test(config, &paths, inputs))
         } else if file_path.is_dir() {
             let relative_file_path = relative_dir_path.join(file.file_name());
             if &file_name != "auxiliary" {
@@ -410,39 +493,25 @@ pub fn is_test(file_name: &OsString) -> bool {
     !invalid_prefixes.iter().any(|p| file_name.starts_with(p))
 }
 
-fn make_test(config: &Config, testpaths: &TestPaths, inputs: &Stamp) -> Vec<test::TestDescAndFn> {
+fn make_test(config: &Config, testpaths: &TestPaths, inputs: &Stamp) -> test::TestDescAndFn {
     let test_path = PathBuf::from(&testpaths.file);
-    let revisions = vec![None];
 
-    revisions
-        .into_iter()
-        .map(|revision: Option<&String>| {
-            let src_file =
-                std::fs::File::open(&test_path).expect("open test file to parse ignores");
-            let cfg = revision.map(|v| &**v);
-            let test_name = crate::make_test_name(config, testpaths, revision);
-            let mut desc = make_test_description(config, test_name, &test_path, src_file, cfg);
-            // Ignore tests that already run and are up to date with respect to inputs.
-            if !config.force_rerun {
-                desc.ignore |=
-                    is_up_to_date(config, testpaths, revision.map(|s| s.as_str()), inputs);
-            }
-            test::TestDescAndFn { desc, testfn: make_test_closure(config, testpaths, revision) }
-        })
-        .collect()
+    let src_file = std::fs::File::open(&test_path).expect("open test file to parse ignores");
+    let test_name = crate::make_test_name(config, testpaths);
+    let mut desc = make_test_description(config, test_name, &test_path, src_file);
+    // Ignore tests that already run and are up to date with respect to inputs.
+    if !config.force_rerun {
+        desc.ignore |= is_up_to_date(config, testpaths, inputs);
+    }
+    test::TestDescAndFn { desc, testfn: make_test_closure(config, testpaths) }
 }
 
-fn stamp(config: &Config, testpaths: &TestPaths, revision: Option<&str>) -> PathBuf {
-    output_base_dir(config, testpaths, revision).join("stamp")
+fn stamp(config: &Config, testpaths: &TestPaths) -> PathBuf {
+    output_base_dir(config, testpaths).join("stamp")
 }
 
-fn is_up_to_date(
-    config: &Config,
-    testpaths: &TestPaths,
-    revision: Option<&str>,
-    inputs: &Stamp,
-) -> bool {
-    let stamp_name = stamp(config, testpaths, revision);
+fn is_up_to_date(config: &Config, testpaths: &TestPaths, inputs: &Stamp) -> bool {
+    let stamp_name = stamp(config, testpaths);
     // Check timestamps.
     let inputs = inputs.clone();
 
@@ -483,11 +552,7 @@ impl Stamp {
     }
 }
 
-fn make_test_name(
-    config: &Config,
-    testpaths: &TestPaths,
-    revision: Option<&String>,
-) -> test::TestName {
+fn make_test_name(config: &Config, testpaths: &TestPaths) -> test::TestName {
     // Convert a complete path to something like
     //
     //    ui/foo/bar/baz.rs
@@ -495,21 +560,22 @@ fn make_test_name(
         .join(&testpaths.relative_dir)
         .join(&testpaths.file.file_name().unwrap());
 
-    test::DynTestName(format!(
-        "[{}] {}{}",
-        config.mode,
-        path.display(),
-        revision.map_or("".to_string(), |rev| format!("#{}", rev))
-    ))
+    test::DynTestName(format!("[{}] {}", config.mode, path.display()))
 }
 
-fn make_test_closure(
-    config: &Config,
-    testpaths: &TestPaths,
-    revision: Option<&String>,
-) -> test::TestFn {
+fn make_test_closure(config: &Config, testpaths: &TestPaths) -> test::TestFn {
     let config = config.clone();
     let testpaths = testpaths.clone();
-    let revision = revision.cloned();
-    test::DynTestFn(Box::new(move || runtest::run(config, &testpaths, revision.as_deref())))
+    test::DynTestFn(Box::new(move || {
+        runtest::run(config, &testpaths);
+        Ok(())
+    }))
+}
+
+/// Print a message and error out without panicking
+fn fatal_error(message: &str) {
+    println!("error: {message}");
+    // Use resume_unwind instead of panic!() to prevent a panic message + backtrace from
+    // compiletest, which is unnecessary noise.
+    std::panic::resume_unwind(Box::new(()));
 }

@@ -11,11 +11,8 @@
 #![feature(assert_matches)]
 #![feature(box_patterns)]
 #![feature(control_flow_enum)]
-#![feature(box_syntax)]
-#![feature(let_else)]
 #![feature(test)]
 #![feature(never_type)]
-#![feature(once_cell)]
 #![feature(type_ascription)]
 #![feature(iter_intersperse)]
 #![recursion_limit = "256"]
@@ -62,7 +59,6 @@ extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_trait_selection;
-extern crate rustc_typeck;
 extern crate test;
 
 pub mod doctest;

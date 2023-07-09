@@ -2,9 +2,6 @@
 # Copyright Kani Contributors
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 
-# To enable "unsound_experimental features, run as follows:
-# `KANI_ENABLE_UNSOUND_EXPERIMENTS=1 scripts/kani-regression.sh`
-
 if [[ -z $KANI_REGRESSION_KEEP_GOING ]]; then
   set -o errexit
 fi
@@ -22,30 +19,25 @@ KANI_DIR=$SCRIPT_DIR/..
 export KANI_FAIL_ON_UNEXPECTED_DESCRIPTION="true"
 
 # Required dependencies
-check-cbmc-version.py --major 5 --minor 67
-check-cbmc-viewer-version.py --major 3 --minor 5
+check-cbmc-version.py --major 5 --minor 86
+check-cbmc-viewer-version.py --major 3 --minor 8
+check_kissat_version.sh
 
 # Formatting check
 ${SCRIPT_DIR}/kani-fmt.sh --check
 
 # Build all packages in the workspace
-if [[ "" != "${KANI_ENABLE_UNSOUND_EXPERIMENTS-}" ]]; then
-  cargo build-dev -- --features unsound_experiments
-else
-  cargo build-dev
-fi
+cargo build-dev
 
 # Unit tests
 cargo test -p cprover_bindings
 cargo test -p kani-compiler
 cargo test -p kani-driver
-
-# Check output files (--gen-c option)
-echo "Check GotoC output file generation"
-time "$KANI_DIR"/tests/output-files/check-output.sh
+cargo test -p kani_metadata
 
 # Declare testing suite information (suite and mode)
 TESTS=(
+    "script-based-pre exec"
     "kani kani"
     "expected expected"
     "ui expected"
@@ -58,11 +50,10 @@ TESTS=(
     "kani-fixme kani-fixme"
 )
 
-if [[ "" != "${KANI_ENABLE_UNSOUND_EXPERIMENTS-}" ]]; then
-  TESTS+=("unsound_experiments kani")
-else 
-  TESTS+=("no_unsound_experiments expected")
-fi
+# Build compiletest and print configuration. We pick suite / mode combo so there's no test.
+echo "--- Compiletest configuration"
+cargo run -p compiletest --quiet -- --suite kani --mode cargo-kani --dry-run --verbose
+echo "-----------------------------"
 
 # Extract testing suite information and run compiletest
 for testp in "${TESTS[@]}"; do
@@ -70,9 +61,8 @@ for testp in "${TESTS[@]}"; do
   suite=${testl[0]}
   mode=${testl[1]}
   echo "Check compiletest suite=$suite mode=$mode"
-  # Note: `cargo-kani` tests fail if we do not add `$(pwd)` to `--build-base`
-  # Tracking issue: https://github.com/model-checking/kani/issues/755
-  cargo run -p compiletest --quiet -- --suite $suite --mode $mode --quiet
+  cargo run -p compiletest --quiet -- --suite $suite --mode $mode \
+      --quiet --no-fail-fast
 done
 
 # Check codegen for the standard library
@@ -89,17 +79,17 @@ fi
 # Check codegen of firecracker
 time "$SCRIPT_DIR"/codegen-firecracker.sh
 
-# Check that we can use Kani on crates with a diamond dependency graph,
-# with two different versions of the same crate.
-#
-#         dependency1
-#        /           \ v0.1.0
-#   main             dependency3
-#        \           / v0.1.1
-#         dependency2
-time "$KANI_DIR"/tests/kani-dependency-test/diamond-dependency/run-dependency-test.sh
+# Test run 'cargo kani assess scan'
+"$SCRIPT_DIR"/assess-scan-regression.sh
+
+# Test for --manifest-path which we cannot do through compiletest.
+# It should just successfully find the project and specified proof harness. (Then clean up.)
+FEATURES_MANIFEST_PATH="$KANI_DIR/tests/cargo-kani/cargo-features-flag/Cargo.toml"
+cargo kani --manifest-path "$FEATURES_MANIFEST_PATH" --harness trivial_success
+cargo clean --manifest-path "$FEATURES_MANIFEST_PATH"
 
 # Check that documentation compiles.
+echo "Starting doc tests:"
 cargo doc --workspace --no-deps --exclude std
 
 echo

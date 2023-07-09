@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use anyhow::{bail, Result};
+use clap::Parser;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -13,7 +14,7 @@ use toml::Value;
 ///
 /// The arguments passed via command line have precedence over the ones from the Cargo.toml.
 pub fn join_args(input_args: Vec<OsString>) -> Result<Vec<OsString>> {
-    let toml_path = cargo_locate_project();
+    let toml_path = cargo_locate_project(&input_args);
     if toml_path.is_err() {
         // We're not inside a Cargo project. Don't error... yet.
         return Ok(input_args);
@@ -31,7 +32,7 @@ pub fn join_args(input_args: Vec<OsString>) -> Result<Vec<OsString>> {
 /// flag must only be included once.
 ///
 /// This function will return the arguments in the following order:
-/// ```
+/// ```text
 /// <bin_name> [<cfg_kani_args>]* [<cmd_kani_args>]* [--cbmc-args [<cfg_cbmc_args>]* [<cmd_cbmc_args>]*]
 /// ```
 fn merge_args(
@@ -65,40 +66,68 @@ fn merge_args(
 }
 
 /// `locate-project` produces a response like: `/full/path/to/src/cargo-kani/Cargo.toml`
-fn cargo_locate_project() -> Result<PathBuf> {
-    let cmd =
-        Command::new("cargo").args(["locate-project", "--message-format", "plain"]).output()?;
-    if !cmd.status.success() {
-        let err = std::str::from_utf8(&cmd.stderr)?;
-        bail!("{}", err);
+fn cargo_locate_project(input_args: &[OsString]) -> Result<PathBuf> {
+    // Try parsing our command line arguments as they presently look, to see if a "manifest-path" has been given.
+    let current_args = crate::args::CargoKaniArgs::parse_from(input_args);
+
+    if let Some(path) = current_args.verify_opts.cargo.manifest_path {
+        Ok(path)
+    } else {
+        let cmd =
+            Command::new("cargo").args(["locate-project", "--message-format", "plain"]).output()?;
+        if !cmd.status.success() {
+            let err = std::str::from_utf8(&cmd.stderr)?;
+            bail!("{}", err);
+        }
+        let path = std::str::from_utf8(&cmd.stdout)?;
+        // A trim is essential: remove the trailing newline
+        Ok(path.trim().into())
     }
-    let path = std::str::from_utf8(&cmd.stdout)?;
-    // A trim is essential: remove the trailing newline
-    Ok(path.trim().into())
 }
 
 /// Parse a config toml string and extract the cargo-kani arguments we should try injecting.
 /// This returns two different vectors since all cbmc-args have to be at the end.
+/// We currently support the following entries:
+/// - flags: Flags that get directly passed to Kani.
+/// - unstable: Unstable features (it will be passed using `-Z` flag).
+/// The tables supported are:
+/// "workspace.metadata.kani", "package.metadata.kani", "kani"
 fn toml_to_args(tomldata: &str) -> Result<(Vec<OsString>, Vec<OsString>)> {
     let config = tomldata.parse::<Value>()?;
     // To make testing easier, our function contract is to produce a stable ordering of flags for a given input.
     // Consequently, we use BTreeMap instead of HashMap here.
     let mut map: BTreeMap<String, Value> = BTreeMap::new();
-    let tables = ["workspace.metadata.kani.flags", "package.metadata.kani.flags", "kani.flags"];
+    let tables = ["workspace.metadata.kani", "package.metadata.kani", "kani"];
+    let mut args = Vec::new();
 
     for table in tables {
-        if let Some(val) = get_table(&config, table) {
-            map.extend(val.iter().map(|(x, y)| (x.to_owned(), y.to_owned())));
+        if let Some(table) = get_table(&config, table) {
+            if let Some(entry) = table.get("flags") {
+                if let Some(val) = entry.as_table() {
+                    map.extend(val.iter().map(|(x, y)| (x.to_owned(), y.to_owned())));
+                }
+            }
+
+            if let Some(entry) = table.get("unstable") {
+                if let Some(val) = entry.as_table() {
+                    args.append(
+                        &mut val
+                            .iter()
+                            .filter_map(|(k, v)| unstable_entry(k, v).transpose())
+                            .collect::<Result<Vec<_>>>()?,
+                    );
+                }
+            }
         }
     }
 
-    let mut args = Vec::new();
     let mut cbmc_args = Vec::new();
 
     for (flag, value) in map {
         if flag == "cbmc-args" {
             // --cbmc-args has to come last because it eats all remaining arguments
-            insert_arg_from_toml(&flag, &value, &mut cbmc_args)?;
+            cbmc_args.push("--cbmc-args".into());
+            cbmc_args.append(&mut cbmc_arg_from_toml(&value)?);
         } else {
             insert_arg_from_toml(&flag, &value, &mut args)?;
         }
@@ -107,23 +136,32 @@ fn toml_to_args(tomldata: &str) -> Result<(Vec<OsString>, Vec<OsString>)> {
     Ok((args, cbmc_args))
 }
 
+/// Parse an entry from the unstable table and convert it into a `-Z <unstable_feature>` argument
+fn unstable_entry(name: &String, value: &Value) -> Result<Option<OsString>> {
+    match value {
+        Value::Boolean(b) if *b => Ok(Some(OsString::from(format!("-Z{name}")))),
+        Value::Boolean(b) if !b => Ok(None),
+        _ => bail!("Expected no arguments for unstable feature `{name}` but found `{value}`"),
+    }
+}
+
 /// Translates one toml entry (flag, value) into arguments and inserts it into `args`
 fn insert_arg_from_toml(flag: &str, value: &Value, args: &mut Vec<OsString>) -> Result<()> {
     match value {
         Value::Boolean(b) => {
             if *b {
-                args.push(format!("--{}", flag).into());
+                args.push(format!("--{flag}").into());
             } else if flag.starts_with("no-") {
                 // Seems iffy. Let's just not support this.
                 bail!("{} disables a disabling flag. Just enable the flag instead.", flag);
             } else {
-                args.push(format!("--no-{}", flag).into());
+                args.push(format!("--no-{flag}").into());
             }
         }
         Value::Array(a) => {
-            args.push(format!("--{}", flag).into());
             for arg in a {
                 if let Some(arg) = arg.as_str() {
+                    args.push(format!("--{flag}").into());
                     args.push(arg.into());
                 } else {
                     bail!("flag {} contains non-string values", flag);
@@ -131,7 +169,7 @@ fn insert_arg_from_toml(flag: &str, value: &Value, args: &mut Vec<OsString>) -> 
             }
         }
         Value::String(s) => {
-            args.push(format!("--{}", flag).into());
+            args.push(format!("--{flag}").into());
             args.push(s.into());
         }
         _ => {
@@ -139,6 +177,33 @@ fn insert_arg_from_toml(flag: &str, value: &Value, args: &mut Vec<OsString>) -> 
         }
     }
     Ok(())
+}
+
+/// Translates one toml entry (flag, value) into arguments and inserts it into `args`
+fn cbmc_arg_from_toml(value: &Value) -> Result<Vec<OsString>> {
+    let mut args = vec![];
+    const CBMC_FLAG: &str = "--cbmc-args";
+    match value {
+        Value::Boolean(_) => {
+            bail!("cannot pass boolean value to `{CBMC_FLAG}`")
+        }
+        Value::Array(a) => {
+            for arg in a {
+                if let Some(arg) = arg.as_str() {
+                    args.push(arg.into());
+                } else {
+                    bail!("flag {CBMC_FLAG} contains non-string values");
+                }
+            }
+        }
+        Value::String(s) => {
+            args.push(s.into());
+        }
+        _ => {
+            bail!("Unknown key type {CBMC_FLAG}");
+        }
+    }
+    Ok(args)
 }
 
 /// Take 'a.b.c' and turn it into 'start['a']['b']['c']' reliably, and interpret the result as a table
@@ -152,6 +217,8 @@ fn get_table<'a>(start: &'a Value, table: &str) -> Option<&'a Table> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     #[test]
@@ -200,5 +267,51 @@ mod tests {
         assert_eq!(merged[3], OsString::from("--cbmc-args"));
         assert_eq!(merged[4], OsString::from("--trace"));
         assert_eq!(merged[5], OsString::from("--fake"));
+    }
+
+    #[test]
+    fn check_multiple_table_works() {
+        let data = "[workspace.metadata.kani.unstable]
+                         disabled-feature=false
+                         enabled-feature=true
+                         [workspace.metadata.kani.flags]
+                         kani-arg=\"value\"
+                         cbmc-args=[\"--dummy\"]";
+        let (kani_args, cbmc_args) = toml_to_args(data).unwrap();
+        assert_eq!(kani_args, vec!["-Zenabled-feature", "--kani-arg", "value"]);
+        assert_eq!(cbmc_args, vec!["--cbmc-args", "--dummy"]);
+    }
+
+    #[test]
+    fn check_unstable_table_works() {
+        let data = "[workspace.metadata.kani.unstable]
+                         disabled-feature=false
+                         enabled-feature=true";
+        let (kani_args, cbmc_args) = toml_to_args(data).unwrap();
+        assert_eq!(kani_args, vec!["-Zenabled-feature"]);
+        assert!(cbmc_args.is_empty());
+    }
+
+    #[test]
+    fn check_unstable_entry_enabled() -> Result<()> {
+        let name = String::from("feature");
+        assert_eq!(
+            unstable_entry(&name, &Value::Boolean(true))?,
+            Some(OsString::from_str("-Zfeature")?)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_unstable_entry_disabled() -> Result<()> {
+        let name = String::from("feature");
+        assert_eq!(unstable_entry(&name, &Value::Boolean(false))?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn check_unstable_entry_invalid() {
+        let name = String::from("feature");
+        assert!(matches!(unstable_entry(&name, &Value::String("".to_string())), Err(_)));
     }
 }

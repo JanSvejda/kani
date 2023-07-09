@@ -9,11 +9,9 @@
 //! this module addresses this issue.
 
 use crate::codegen_cprover_gotoc::codegen::PropertyClass;
-use crate::codegen_cprover_gotoc::utils;
 use crate::codegen_cprover_gotoc::GotocCtx;
 use crate::unwrap_or_return_codegen_unimplemented_stmt;
 use cbmc::goto_program::{BuiltinFn, Expr, Location, Stmt, Type};
-use kani_queries::UserInput;
 use rustc_middle::mir::{BasicBlock, Place};
 use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::{Instance, TyCtxt};
@@ -47,10 +45,18 @@ fn matches_function(tcx: TyCtxt, instance: Instance, attr_name: &str) -> bool {
     false
 }
 
-struct ExpectFail;
-impl<'tcx> GotocHook<'tcx> for ExpectFail {
+/// A hook for Kani's `cover` function (declared in `library/kani/src/lib.rs`).
+/// The function takes two arguments: a condition expression (bool) and a
+/// message (&'static str).
+/// The hook codegens the function as a cover property that checks whether the
+/// condition is satisfiable. Unlike assertions, cover properties currently do
+/// not have an impact on verification success or failure. See
+/// <https://github.com/model-checking/kani/blob/main/rfc/src/rfcs/0003-cover-statement.md>
+/// for more details.
+struct Cover;
+impl<'tcx> GotocHook<'tcx> for Cover {
     fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
-        matches_function(tcx, instance, "KaniExpectFail")
+        matches_function(tcx, instance, "KaniCover")
     }
 
     fn handle(
@@ -63,20 +69,21 @@ impl<'tcx> GotocHook<'tcx> for ExpectFail {
         span: Option<Span>,
     ) -> Stmt {
         assert_eq!(fargs.len(), 2);
-        let target = target.unwrap();
         let cond = fargs.remove(0).cast_to(Type::bool());
+        let msg = fargs.remove(0);
+        let msg = tcx.extract_const_message(&msg).unwrap();
+        let target = target.unwrap();
+        let caller_loc = tcx.codegen_caller_span(&span);
 
-        // Add "EXPECTED FAIL" to the message because compiletest relies on it
-        let msg =
-            format!("EXPECTED FAIL: {}", utils::extract_const_message(&fargs.remove(0)).unwrap());
+        let (msg, reach_stmt) = tcx.codegen_reachability_check(msg, span);
 
-        let loc = tcx.codegen_span_option(span);
         Stmt::block(
             vec![
-                tcx.codegen_assert(cond, PropertyClass::ExpectFail, &msg, loc),
-                Stmt::goto(tcx.current_fn().find_label(&target), loc),
+                reach_stmt,
+                tcx.codegen_cover(cond, &msg, span),
+                Stmt::goto(tcx.current_fn().find_label(&target), caller_loc),
             ],
-            loc,
+            caller_loc,
         )
     }
 }
@@ -129,24 +136,11 @@ impl<'tcx> GotocHook<'tcx> for Assert {
         assert_eq!(fargs.len(), 2);
         let cond = fargs.remove(0).cast_to(Type::bool());
         let msg = fargs.remove(0);
-        let msg = utils::extract_const_message(&msg).unwrap();
+        let msg = tcx.extract_const_message(&msg).unwrap();
         let target = target.unwrap();
         let caller_loc = tcx.codegen_caller_span(&span);
 
-        // TODO: switch to tagging assertions via the property class once CBMC allows that:
-        // https://github.com/diffblue/cbmc/issues/6692
-        let (msg, reach_stmt) = if tcx.queries.get_check_assertion_reachability() {
-            // Generate a unique ID for the assert
-            let assert_id = tcx.next_check_id();
-            // Add this ID as a prefix to the assert message so that it can be
-            // easily paired with the reachability check
-            let msg = GotocCtx::add_prefix_to_msg(&msg, &assert_id);
-            let reach_msg = GotocCtx::reachability_check_message(&assert_id);
-            // inject a reachability (cover) check to the current location
-            (msg, tcx.codegen_cover_loc(&reach_msg, span))
-        } else {
-            (msg, Stmt::skip(caller_loc))
-        };
+        let (msg, reach_stmt) = tcx.codegen_reachability_check(msg, span);
 
         // Since `cond` might have side effects, assign it to a temporary
         // variable so that it's evaluated once, then assert and assume it
@@ -265,39 +259,6 @@ impl<'tcx> GotocHook<'tcx> for RustAlloc {
     }
 }
 
-struct SliceFromRawPart;
-
-impl<'tcx> GotocHook<'tcx> for SliceFromRawPart {
-    fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
-        let name = with_no_trimmed_paths!(tcx.def_path_str(instance.def_id()));
-        name == "core::ptr::slice_from_raw_parts"
-            || name == "std::ptr::slice_from_raw_parts"
-            || name == "core::ptr::slice_from_raw_parts_mut"
-            || name == "std::ptr::slice_from_raw_parts_mut"
-    }
-
-    fn handle(
-        &self,
-        tcx: &mut GotocCtx<'tcx>,
-        _instance: Instance<'tcx>,
-        mut fargs: Vec<Expr>,
-        assign_to: Place<'tcx>,
-        target: Option<BasicBlock>,
-        span: Option<Span>,
-    ) -> Stmt {
-        let loc = tcx.codegen_span_option(span);
-        let target = target.unwrap();
-        let pt = tcx.codegen_ty(tcx.place_ty(&assign_to));
-        let data = fargs.remove(0);
-        let len = fargs.remove(0);
-        let code = unwrap_or_return_codegen_unimplemented_stmt!(tcx, tcx.codegen_place(&assign_to))
-            .goto_expr
-            .assign(Expr::struct_expr_from_values(pt, vec![data, len], &tcx.symbol_table), loc)
-            .with_location(loc);
-        Stmt::block(vec![code, Stmt::goto(tcx.current_fn().find_label(&target), loc)], loc)
-    }
-}
-
 /// This hook intercepts calls to `memcmp` and skips CBMC's pointer checks if the number of bytes to be compared is zero.
 /// See issue <https://github.com/model-checking/kani/issues/1489>
 ///
@@ -370,10 +331,9 @@ pub fn fn_hooks<'tcx>() -> GotocHooks<'tcx> {
             Rc::new(Panic),
             Rc::new(Assume),
             Rc::new(Assert),
-            Rc::new(ExpectFail),
+            Rc::new(Cover),
             Rc::new(Nondet),
             Rc::new(RustAlloc),
-            Rc::new(SliceFromRawPart),
             Rc::new(MemCmp),
         ],
     }

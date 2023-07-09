@@ -1,64 +1,31 @@
 // Copyright Kani Contributors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::session::KaniSession;
-use crate::util::{alter_extension, guess_rlib_name};
-
-/// The outputs of kani-compiler operating on a single Rust source file.
-pub struct SingleOutputs {
-    /// The directory where compiler outputs should be directed.
-    /// May be '.' or a path for 'kani', usually under 'target/' for 'cargo-kani'
-    pub outdir: PathBuf,
-    /// The *.symtab.json written.
-    pub symtab: PathBuf,
-    /// The vtable restrictions files, if any.
-    pub restrictions: Option<PathBuf>,
-    /// The kani-metadata.json file written by kani-compiler.
-    pub metadata: PathBuf,
-}
+use crate::session::{lib_folder, KaniSession};
 
 impl KaniSession {
     /// Used by `kani` and not `cargo-kani` to process a single Rust file into a `.symtab.json`
-    pub fn compile_single_rust_file(&self, file: &Path) -> Result<SingleOutputs> {
-        let outdir =
-            file.canonicalize()?.parent().context("File doesn't exist in a directory?")?.to_owned();
-        let output_filename = alter_extension(file, "symtab.json");
-        let typemap_filename = alter_extension(file, "type_map.json");
-        let metadata_filename = alter_extension(file, "kani-metadata.json");
-        let restrictions_filename = alter_extension(file, "restrictions.json");
-        let rlib_filename = guess_rlib_name(file);
-
-        self.record_temporary_files(&[
-            &rlib_filename,
-            &output_filename,
-            &typemap_filename,
-            &metadata_filename,
-        ]);
-        if self.args.restrict_vtable() {
-            self.record_temporary_files(&[&restrictions_filename]);
-        }
-
-        let mut kani_args = self.kani_specific_flags();
-        if self.args.mir_linker {
-            if self.args.function.is_some() {
-                kani_args.push("--reachability=pub_fns".into());
-            } else {
-                kani_args.push("--reachability=harnesses".into());
-            }
-        } else {
-            kani_args.push("--reachability=legacy".into());
-        }
+    // TODO: Move these functions to be part of the builder.
+    pub fn compile_single_rust_file(
+        &self,
+        file: &Path,
+        crate_name: &String,
+        outdir: &Path,
+    ) -> Result<()> {
+        let mut kani_args = self.kani_compiler_flags();
+        kani_args.push(format!("--reachability={}", self.reachability_mode()));
 
         let mut rustc_args = self.kani_rustc_flags();
-        // kani-compiler workaround part 1/2: *.symtab.json gets generated in the local
-        // directory, instead of based on file name like we expect.
-        // So let we'll `cd` to that directory and here we only pass filename.
-        rustc_args.push(file.file_name().unwrap().into());
+        rustc_args.push(file.into());
+        rustc_args.push("--out-dir".into());
+        rustc_args.push(OsString::from(outdir.as_os_str()));
+        rustc_args.push("--crate-name".into());
+        rustc_args.push(crate_name.into());
 
         if self.args.tests {
             // e.g. `tests/kani/Options/check_tests.rs` will fail because it already has it
@@ -81,36 +48,31 @@ impl KaniSession {
         // Note that the order of arguments is important. Kani specific flags should precede
         // rustc ones.
         let mut cmd = Command::new(&self.kani_compiler);
-        cmd.args(kani_args).args(rustc_args);
+        let kani_compiler_args = to_rustc_arg(kani_args);
+        cmd.arg(kani_compiler_args).args(rustc_args);
 
-        // kani-compiler workaround: part 2/2: change directory for the subcommand
-        cmd.current_dir(&outdir);
-
-        if self.args.quiet {
+        if self.args.common_args.quiet {
             self.run_suppress(cmd)?;
         } else {
             self.run_terminal(cmd)?;
         }
-
-        Ok(SingleOutputs {
-            outdir,
-            symtab: output_filename,
-            metadata: metadata_filename,
-            restrictions: if self.args.restrict_vtable() {
-                Some(restrictions_filename)
-            } else {
-                None
-            },
-        })
+        Ok(())
     }
 
-    /// These arguments are arguments passed to kani-compiler that are `kani` specific.
-    /// These are also used by call_cargo to pass as the env var KANIFLAGS.
-    pub fn kani_specific_flags(&self) -> Vec<OsString> {
-        let mut flags = vec![OsString::from("--goto-c")];
+    /// Create a compiler option that represents the reachability mod.
+    pub fn reachability_arg(&self) -> String {
+        to_rustc_arg(vec![format!("--reachability={}", self.reachability_mode())])
+    }
 
-        if self.args.debug {
+    /// These arguments are arguments passed to kani-compiler that are `kani` compiler specific.
+    pub fn kani_compiler_flags(&self) -> Vec<String> {
+        let mut flags = vec![check_version()];
+
+        if self.args.common_args.debug {
             flags.push("--log-level=debug".into());
+        } else if self.args.common_args.verbose {
+            // Print the symtab command being invoked.
+            flags.push("--log-level=info".into());
         } else {
             flags.push("--log-level=warn".into());
         }
@@ -125,16 +87,46 @@ impl KaniSession {
             flags.push("--ignore-global-asm".into());
         }
 
-        #[cfg(feature = "unsound_experiments")]
-        flags.extend(self.args.unsound_experiments.process_args());
+        // Users activate it via the command line switch
+        if self.args.write_json_symtab {
+            flags.push("--write-json-symtab".into());
+        }
+
+        if self.args.enable_stubbing {
+            flags.push("--enable-stubbing".into());
+        }
+
+        flags.extend(
+            self.args
+                .common_args
+                .unstable_features
+                .iter()
+                .map(|feature| format!("--unstable={feature}")),
+        );
+
+        // This argument will select the Kani flavour of the compiler. It will be removed before
+        // rustc driver is invoked.
+        flags.push("--goto-c".into());
 
         flags
     }
 
-    /// These arguments are arguments passed to kani-compiler that are `rustc` specific.
-    /// These are also used by call_cargo to pass as the env var KANIFLAGS.
+    /// This function generates all rustc configurations required by our goto-c codegen.
     pub fn kani_rustc_flags(&self) -> Vec<OsString> {
-        let mut flags = Vec::<OsString>::new();
+        let lib_path = lib_folder().unwrap();
+        let mut flags: Vec<_> = base_rustc_flags(lib_path);
+        // We only use panic abort strategy for verification since we cannot handle unwind logic.
+        flags.extend_from_slice(
+            &[
+                "-C",
+                "panic=abort",
+                "-C",
+                "symbol-mangling-version=v0",
+                "-Z",
+                "panic_abort_tests=yes",
+            ]
+            .map(OsString::from),
+        );
         if self.args.use_abs {
             flags.push("-Z".into());
             flags.push("force-unstable-if-unmarked=yes".into()); // ??
@@ -149,19 +141,78 @@ impl KaniSession {
             flags.push("randomize-layout".into());
             if let Some(seed) = seed_opt {
                 flags.push("-Z".into());
-                flags.push(format!("layout-seed={}", seed).into());
+                flags.push(format!("layout-seed={seed}").into());
             }
         }
 
-        flags.push("-C".into());
-        flags.push("symbol-mangling-version=v0".into());
-
-        // e.g. compiletest will set 'compile-flags' here and we should pass those down to rustc
-        // and we fail in `tests/kani/Match/match_bool.rs`
-        if let Ok(str) = std::env::var("RUSTFLAGS") {
-            flags.extend(str.split(' ').map(OsString::from));
-        }
+        // This argument will select the Kani flavour of the compiler. It will be removed before
+        // rustc driver is invoked.
+        flags.push("--kani-compiler".into());
 
         flags
     }
+}
+
+/// Common flags used for compiling user code for verification and playback flow.
+pub fn base_rustc_flags(lib_path: PathBuf) -> Vec<OsString> {
+    let kani_std_rlib = lib_path.join("libstd.rlib");
+    let kani_std_wrapper = format!("noprelude:std={}", kani_std_rlib.to_str().unwrap());
+    let sysroot = lib_path.parent().unwrap();
+    let mut flags = [
+        "-C",
+        "overflow-checks=on",
+        "-Z",
+        "unstable-options",
+        "-Z",
+        "trim-diagnostic-paths=no",
+        "-Z",
+        "human_readable_cgu_names",
+        "-Z",
+        "always-encode-mir",
+        "--cfg=kani",
+        "-Z",
+        "crate-attr=feature(register_tool)",
+        "-Z",
+        "crate-attr=register_tool(kanitool)",
+        "--sysroot",
+        sysroot.to_str().unwrap(),
+        "-L",
+        lib_path.to_str().unwrap(),
+        "--extern",
+        "kani",
+        "--extern",
+        kani_std_wrapper.as_str(),
+    ]
+    .map(OsString::from)
+    .to_vec();
+
+    // e.g. compiletest will set 'compile-flags' here and we should pass those down to rustc
+    // and we fail in `tests/kani/Match/match_bool.rs`
+    if let Ok(str) = std::env::var("RUSTFLAGS") {
+        flags.extend(str.split(' ').map(OsString::from));
+    }
+
+    flags
+}
+
+/// This function can be used to convert Kani compiler specific arguments into a rustc one.
+/// We currently pass Kani specific arguments using the `--llvm-args` structure which is the
+/// hacky mechanism used by other rustc backend to receive arguments unknown to rustc.
+///
+/// Note that Cargo caching mechanism takes the building context into consideration, which
+/// includes the value of the rust flags. By using `--llvm-args`, we ensure that Cargo takes into
+/// consideration all arguments that are used to configure Kani compiler. For example, enabling the
+/// reachability checks will force recompilation if they were disabled in previous build.
+/// For more details on this caching mechanism, see the
+/// [fingerprint documentation](https://github.com/rust-lang/cargo/blob/82c3bb79e3a19a5164e33819ef81bfc2c984bc56/src/cargo/core/compiler/fingerprint/mod.rs)
+pub fn to_rustc_arg(kani_args: Vec<String>) -> String {
+    format!(r#"-Cllvm-args={}"#, kani_args.join(" "))
+}
+
+/// Function that returns a `--check-version` argument to be added to the compiler flags.
+/// This is really just used to force the compiler to recompile everything from scratch when a user
+/// upgrades Kani. Cargo currently ignores the codegen backend version.
+/// See <https://github.com/model-checking/kani/issues/2140> for more context.
+fn check_version() -> String {
+    format!("--check-version={}", env!("CARGO_PKG_VERSION"))
 }

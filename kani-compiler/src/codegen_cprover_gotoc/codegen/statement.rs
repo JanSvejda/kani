@@ -3,11 +3,9 @@
 use super::typ::TypeExt;
 use super::typ::FN_RETURN_VOID_VAR_NAME;
 use super::PropertyClass;
-use crate::codegen_cprover_gotoc::codegen::typ::pointee_type;
 use crate::codegen_cprover_gotoc::{GotocCtx, VtableCtx};
 use crate::unwrap_or_return_codegen_unimplemented_stmt;
 use cbmc::goto_program::{Expr, Location, Stmt, Type};
-use kani_queries::UserInput;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir;
 use rustc_middle::mir::{
@@ -18,8 +16,9 @@ use rustc_middle::ty;
 use rustc_middle::ty::layout::LayoutOf;
 use rustc_middle::ty::{Instance, InstanceDef, Ty};
 use rustc_span::Span;
+use rustc_target::abi::VariantIdx;
 use rustc_target::abi::{FieldsShape, Primitive, TagEncoding, Variants};
-use tracing::{debug, info_span, trace, warn};
+use tracing::{debug, debug_span, trace};
 
 impl<'tcx> GotocCtx<'tcx> {
     /// Generate Goto-C for MIR [Statement]s.
@@ -28,16 +27,15 @@ impl<'tcx> GotocCtx<'tcx> {
     ///
     /// See [GotocCtx::codegen_terminator] for those.
     pub fn codegen_statement(&mut self, stmt: &Statement<'tcx>) -> Stmt {
-        let _trace_span = info_span!("CodegenStatement", statement = ?stmt).entered();
+        let _trace_span = debug_span!("CodegenStatement", statement = ?stmt).entered();
         debug!(?stmt, kind=?stmt.kind, "handling_statement");
         let location = self.codegen_span(&stmt.source_info.span);
         match &stmt.kind {
             StatementKind::Assign(box (l, r)) => {
                 let lty = self.place_ty(l);
                 let rty = self.rvalue_ty(r);
-                let llayout = self.layout_of(lty);
                 // we ignore assignment for all zero size types
-                if llayout.is_zst() {
+                if self.is_zst(lty) {
                     Stmt::skip(location)
                 } else if lty.is_fn_ptr() && rty.is_fn() && !rty.is_fn_ptr() {
                     // implicit address of a function pointer, e.g.
@@ -58,67 +56,11 @@ impl<'tcx> GotocCtx<'tcx> {
             }
             StatementKind::Deinit(place) => self.codegen_deinit(place, location),
             StatementKind::SetDiscriminant { place, variant_index } => {
-                // this requires place points to an enum type.
-                let pt = self.place_ty(place);
-                let layout = self.layout_of(pt);
-                match &layout.variants {
-                    Variants::Single { .. } => Stmt::skip(location),
-                    Variants::Multiple { tag, tag_encoding, .. } => match tag_encoding {
-                        TagEncoding::Direct => {
-                            let discr =
-                                pt.discriminant_for_variant(self.tcx, *variant_index).unwrap();
-                            let discr_t = self.codegen_enum_discr_typ(pt);
-                            // The constant created below may not fit into the type.
-                            // https://github.com/model-checking/kani/issues/996
-                            //
-                            // It doesn't matter if the type comes from `self.codegen_enum_discr_typ(pt)`
-                            // or `discr.ty`. It looks like something is wrong with `discriminat_for_variant`
-                            // because when it tries to codegen `std::cmp::Ordering` (which should produce
-                            // discriminant values -1, 0 and 1) it produces values 255, 0 and 1 with i8 types:
-                            //
-                            // debug!("DISCRIMINANT - val:{:?} ty:{:?}", discr.val, discr.ty);
-                            // DISCRIMINANT - val:255 ty:i8
-                            // DISCRIMINANT - val:0 ty:i8
-                            // DISCRIMINANT - val:1 ty:i8
-                            let discr = Expr::int_constant(discr.val, self.codegen_ty(discr_t));
-                            let place_goto_expr = unwrap_or_return_codegen_unimplemented_stmt!(
-                                self,
-                                self.codegen_place(place)
-                            )
-                            .goto_expr;
-                            self.codegen_discriminant_field(place_goto_expr, pt)
-                                .assign(discr, location)
-                        }
-                        TagEncoding::Niche { untagged_variant, niche_variants, niche_start } => {
-                            if untagged_variant != variant_index {
-                                let offset = match &layout.fields {
-                                    FieldsShape::Arbitrary { offsets, .. } => offsets[0],
-                                    _ => unreachable!("niche encoding must have arbitrary fields"),
-                                };
-                                let discr_ty = self.codegen_enum_discr_typ(pt);
-                                let discr_ty = self.codegen_ty(discr_ty);
-                                let niche_value =
-                                    variant_index.as_u32() - niche_variants.start().as_u32();
-                                let niche_value = (niche_value as u128).wrapping_add(*niche_start);
-                                let value =
-                                    if niche_value == 0 && tag.primitive() == Primitive::Pointer {
-                                        discr_ty.null()
-                                    } else {
-                                        Expr::int_constant(niche_value, discr_ty.clone())
-                                    };
-                                let place = unwrap_or_return_codegen_unimplemented_stmt!(
-                                    self,
-                                    self.codegen_place(place)
-                                )
-                                .goto_expr;
-                                self.codegen_get_niche(place, offset, discr_ty)
-                                    .assign(value, location)
-                            } else {
-                                Stmt::skip(location)
-                            }
-                        }
-                    },
-                }
+                let dest_ty = self.place_ty(place);
+                let dest_expr =
+                    unwrap_or_return_codegen_unimplemented_stmt!(self, self.codegen_place(place))
+                        .goto_expr;
+                self.codegen_set_discriminant(dest_ty, dest_expr, *variant_index, location)
             }
             StatementKind::StorageLive(_) => Stmt::skip(location), // TODO: fix me
             StatementKind::StorageDead(_) => Stmt::skip(location), // TODO: fix me
@@ -144,11 +86,13 @@ impl<'tcx> GotocCtx<'tcx> {
                     location,
                 )
             }
+            StatementKind::PlaceMention(_) => todo!(),
             StatementKind::FakeRead(_)
             | StatementKind::Retag(_, _)
             | StatementKind::AscribeUserType(_, _)
             | StatementKind::Nop
-            | StatementKind::Coverage { .. } => Stmt::skip(location),
+            | StatementKind::Coverage { .. }
+            | StatementKind::ConstEvalCounter => Stmt::skip(location),
         }
         .with_location(location)
     }
@@ -160,15 +104,15 @@ impl<'tcx> GotocCtx<'tcx> {
     /// See also [`GotocCtx::codegen_statement`] for ordinary [Statement]s.
     pub fn codegen_terminator(&mut self, term: &Terminator<'tcx>) -> Stmt {
         let loc = self.codegen_span(&term.source_info.span);
-        let _trace_span = info_span!("CodegenTerminator", statement = ?term.kind).entered();
+        let _trace_span = debug_span!("CodegenTerminator", statement = ?term.kind).entered();
         debug!("handling terminator {:?}", term);
         //TODO: Instead of doing location::none(), and updating, just putit in when we make the stmt.
         match &term.kind {
             TerminatorKind::Goto { target } => {
                 Stmt::goto(self.current_fn().find_label(target), loc)
             }
-            TerminatorKind::SwitchInt { discr, switch_ty, targets } => {
-                self.codegen_switch_int(discr, *switch_ty, targets, loc)
+            TerminatorKind::SwitchInt { discr, targets } => {
+                self.codegen_switch_int(discr, targets, loc)
             }
             // The following two use `codegen_mimic_unimplemented`
             // because we don't want to raise the warning during compilation.
@@ -179,8 +123,8 @@ impl<'tcx> GotocCtx<'tcx> {
                 loc,
                 "https://github.com/model-checking/kani/issues/692",
             ),
-            TerminatorKind::Abort => self.codegen_mimic_unimplemented(
-                "TerminatorKind::Abort",
+            TerminatorKind::Terminate => self.codegen_mimic_unimplemented(
+                "TerminatorKind::Terminate",
                 loc,
                 "https://github.com/model-checking/kani/issues/692",
             ),
@@ -205,7 +149,7 @@ impl<'tcx> GotocCtx<'tcx> {
                 "unreachable code",
                 loc,
             ),
-            TerminatorKind::Drop { place, target, unwind: _ } => {
+            TerminatorKind::Drop { place, target, unwind: _, replace: _ } => {
                 self.codegen_drop(place, target, loc)
             }
             TerminatorKind::Call { func, args, destination, target, .. } => {
@@ -217,26 +161,22 @@ impl<'tcx> GotocCtx<'tcx> {
                     if *expected { r } else { Expr::not(r) }
                 };
 
-                let msg = if let AssertKind::BoundsCheck { .. } = msg {
+                let msg = if let AssertKind::BoundsCheck { .. } = &**msg {
                     // For bounds check the following panic message is generated at runtime:
                     // "index out of bounds: the length is {len} but the index is {index}",
                     // but CBMC only accepts static messages so we don't add values to the message.
                     "index out of bounds: the length is less than or equal to the given index"
+                } else if let AssertKind::MisalignedPointerDereference { .. } = &**msg {
+                    // Misaligned pointer dereference check messages is also a runtime messages.
+                    // Generate a generic one here.
+                    "misaligned pointer dereference: address must be a multiple of its type's alignment"
                 } else {
                     // For all other assert kind we can get the static message.
                     msg.description()
                 };
 
-                // TODO: switch to tagging assertions via the property class once CBMC allows that:
-                // https://github.com/diffblue/cbmc/issues/6692
-                let (msg_str, reach_stmt) = if self.queries.get_check_assertion_reachability() {
-                    let check_id = self.next_check_id();
-                    let msg_str = GotocCtx::add_prefix_to_msg(msg, &check_id);
-                    let reach_msg = GotocCtx::reachability_check_message(&check_id);
-                    (msg_str, self.codegen_cover_loc(&reach_msg, Some(term.source_info.span)))
-                } else {
-                    (msg.to_string(), Stmt::skip(loc))
-                };
+                let (msg_str, reach_stmt) =
+                    self.codegen_reachability_check(msg.to_owned(), Some(term.source_info.span));
 
                 Stmt::block(
                     vec![
@@ -252,9 +192,7 @@ impl<'tcx> GotocCtx<'tcx> {
                     loc,
                 )
             }
-            TerminatorKind::DropAndReplace { .. }
-            | TerminatorKind::FalseEdge { .. }
-            | TerminatorKind::FalseUnwind { .. } => {
+            TerminatorKind::FalseEdge { .. } | TerminatorKind::FalseUnwind { .. } => {
                 unreachable!("drop elaboration removes these TerminatorKind")
             }
             TerminatorKind::Yield { .. } | TerminatorKind::GeneratorDrop => {
@@ -268,11 +206,72 @@ impl<'tcx> GotocCtx<'tcx> {
         }
     }
 
+    /// Create a statement that sets the variable discriminant to the value that corresponds to the
+    /// variant index.
+    pub fn codegen_set_discriminant(
+        &mut self,
+        dest_ty: Ty<'tcx>,
+        dest_expr: Expr,
+        variant_index: VariantIdx,
+        location: Location,
+    ) -> Stmt {
+        // this requires place points to an enum type.
+        let layout = self.layout_of(dest_ty);
+        match &layout.variants {
+            Variants::Single { .. } => Stmt::skip(location),
+            Variants::Multiple { tag, tag_encoding, .. } => match tag_encoding {
+                TagEncoding::Direct => {
+                    let discr = dest_ty.discriminant_for_variant(self.tcx, variant_index).unwrap();
+                    let discr_t = self.codegen_enum_discr_typ(dest_ty);
+                    // The constant created below may not fit into the type.
+                    // https://github.com/model-checking/kani/issues/996
+                    //
+                    // It doesn't matter if the type comes from `self.codegen_enum_discr_typ(pt)`
+                    // or `discr.ty`. It looks like something is wrong with `discriminat_for_variant`
+                    // because when it tries to codegen `std::cmp::Ordering` (which should produce
+                    // discriminant values -1, 0 and 1) it produces values 255, 0 and 1 with i8 types:
+                    //
+                    // debug!("DISCRIMINANT - val:{:?} ty:{:?}", discr.val, discr.ty);
+                    // DISCRIMINANT - val:255 ty:i8
+                    // DISCRIMINANT - val:0 ty:i8
+                    // DISCRIMINANT - val:1 ty:i8
+                    trace!(?discr, ?discr_t, ?dest_ty, "codegen_set_discriminant direct");
+                    // The discr.ty doesn't always match the tag type. Explicitly cast if needed.
+                    let discr_expr = Expr::int_constant(discr.val, self.codegen_ty(discr.ty))
+                        .cast_to(self.codegen_ty(discr_t));
+                    self.codegen_discriminant_field(dest_expr, dest_ty).assign(discr_expr, location)
+                }
+                TagEncoding::Niche { untagged_variant, niche_variants, niche_start } => {
+                    if *untagged_variant != variant_index {
+                        let offset = match &layout.fields {
+                            FieldsShape::Arbitrary { offsets, .. } => offsets[0usize.into()],
+                            _ => unreachable!("niche encoding must have arbitrary fields"),
+                        };
+                        let discr_ty = self.codegen_enum_discr_typ(dest_ty);
+                        let discr_ty = self.codegen_ty(discr_ty);
+                        let niche_value = variant_index.as_u32() - niche_variants.start().as_u32();
+                        let niche_value = (niche_value as u128).wrapping_add(*niche_start);
+                        trace!(val=?niche_value, typ=?discr_ty, "codegen_set_discriminant niche");
+                        let value = if niche_value == 0
+                            && matches!(tag.primitive(), Primitive::Pointer(_))
+                        {
+                            discr_ty.null()
+                        } else {
+                            Expr::int_constant(niche_value, discr_ty.clone())
+                        };
+                        self.codegen_get_niche(dest_expr, offset, discr_ty).assign(value, location)
+                    } else {
+                        Stmt::skip(location)
+                    }
+                }
+            },
+        }
+    }
+
     /// From rustc doc: "This writes `uninit` bytes to the entire place."
     /// Our model of GotoC has a similar statement, which is later lowered
     /// to assigning a Nondet in CBMC, with a comment specifying that it
     /// corresponds to a Deinit.
-    #[cfg(not(feature = "unsound_experiments"))]
     fn codegen_deinit(&mut self, place: &Place<'tcx>, loc: Location) -> Stmt {
         let dst_mir_ty = self.place_ty(place);
         let dst_type = self.codegen_ty(dst_mir_ty);
@@ -305,12 +304,13 @@ impl<'tcx> GotocCtx<'tcx> {
     /// transformation, so these have a simpler semantics.
     ///
     /// The generated code should invoke the appropriate `drop` function on `place`, then goto `target`.
+    ///
+    /// TODO: this function doesn't handle unwinding which begins if the destructor panics
+    /// <https://github.com/model-checking/kani/issues/221>
     fn codegen_drop(&mut self, place: &Place<'tcx>, target: &BasicBlock, loc: Location) -> Stmt {
-        // TODO: this function doesn't handle unwinding which begins if the destructor panics
-        // https://github.com/model-checking/kani/issues/221
         let place_ty = self.place_ty(place);
-        debug!(?place_ty, "codegen_drop");
         let drop_instance = Instance::resolve_drop_in_place(self.tcx, place_ty);
+        debug!(?place_ty, ?drop_instance, "codegen_drop");
         // Once upon a time we did a `hook_applies` check here, but we no longer seem to hook drops
         let drop_implementation = match drop_instance.def {
             InstanceDef::DropGlue(_, None) => {
@@ -318,42 +318,21 @@ impl<'tcx> GotocCtx<'tcx> {
                 Stmt::skip(loc)
             }
             InstanceDef::DropGlue(_def_id, Some(_)) => {
+                let place_ref = self.codegen_place_ref(place);
                 match place_ty.kind() {
                     ty::Dynamic(..) => {
-                        // Virtual drop via a vtable lookup
-                        let trait_fat_ptr = unwrap_or_return_codegen_unimplemented_stmt!(
-                            self,
-                            self.codegen_place(place)
-                        )
-                        .fat_ptr_goto_expr
-                        .unwrap();
-                        debug!(?trait_fat_ptr, "codegen_drop: ");
-
-                        // Pull the function off of the fat pointer's vtable pointer
-                        let vtable_ref =
-                            trait_fat_ptr.to_owned().member("vtable", &self.symbol_table);
-
+                        // Virtual drop via a vtable lookup.
+                        // Pull the drop function off of the fat pointer's vtable pointer
+                        let vtable_ref = place_ref.to_owned().member("vtable", &self.symbol_table);
+                        let data_ref = place_ref.to_owned().member("data", &self.symbol_table);
                         let vtable = vtable_ref.dereference();
                         let fn_ptr = vtable.member("drop", &self.symbol_table);
+                        trace!(?fn_ptr, ?data_ref, "codegen_drop");
 
-                        // Pull the self argument off of the fat pointer's data pointer
-                        if let Some(typ) = pointee_type(self.local_ty(place.local)) {
-                            if !(typ.is_trait() || typ.is_box()) {
-                                warn!(self_type=?typ, "Unsupported drop of unsized");
-                                return self.codegen_unimplemented_stmt(
-                                    format!("drop unsized struct for {:?}", typ).as_str(),
-                                    loc,
-                                    "https://github.com/model-checking/kani/issues/1072",
-                                );
-                            }
-                        }
-                        let self_data = trait_fat_ptr.to_owned().member("data", &self.symbol_table);
-                        let self_ref = self_data.cast_to(trait_fat_ptr.typ().clone().to_pointer());
-
-                        let call = fn_ptr.dereference().call(vec![self_ref]).as_stmt(loc);
+                        let call = fn_ptr.dereference().call(vec![data_ref]).as_stmt(loc);
                         if self.vtable_ctx.emit_vtable_restrictions {
                             self.virtual_call_with_restricted_fn_ptr(
-                                trait_fat_ptr.typ().clone(),
+                                place_ref.typ().clone(),
                                 VtableCtx::drop_index(),
                                 call,
                             )
@@ -362,22 +341,12 @@ impl<'tcx> GotocCtx<'tcx> {
                         }
                     }
                     _ => {
-                        // Non-virtual, direct drop call
+                        // Non-virtual, direct drop_in_place call
                         assert!(!matches!(drop_instance.def, InstanceDef::Virtual(_, _)));
 
                         let func = self.codegen_func_expr(drop_instance, None);
-                        let place = unwrap_or_return_codegen_unimplemented_stmt!(
-                            self,
-                            self.codegen_place(place)
-                        );
-                        let arg = if let Some(fat_ptr) = place.fat_ptr_goto_expr {
-                            // Drop takes the fat pointer if it exists
-                            fat_ptr
-                        } else {
-                            place.goto_expr.address_of()
-                        };
                         // The only argument should be a self reference
-                        let args = vec![arg];
+                        let args = vec![place_ref];
 
                         // We have a known issue where nested Arc and Mutex objects result in
                         // drop_in_place call implementations that fail to typecheck. Skipping
@@ -386,19 +355,7 @@ impl<'tcx> GotocCtx<'tcx> {
                         // for calls that fail the typecheck.
                         // https://github.com/model-checking/kani/issues/426
                         // Unblocks: https://github.com/model-checking/kani/issues/435
-                        if Expr::typecheck_call(&func, &args) {
-                            func.call(args).as_stmt(loc)
-                        } else {
-                            self.codegen_unimplemented_stmt(
-                                format!(
-                                    "drop_in_place call for {}",
-                                    self.readable_instance_name(drop_instance)
-                                )
-                                .as_str(),
-                                loc,
-                                "https://github.com/model-checking/kani/issues/426",
-                            )
-                        }
+                        func.call(args).as_stmt(loc)
                     }
                 }
             }
@@ -418,23 +375,21 @@ impl<'tcx> GotocCtx<'tcx> {
     fn codegen_switch_int(
         &mut self,
         discr: &Operand<'tcx>,
-        switch_ty: Ty<'tcx>,
         targets: &SwitchTargets,
         loc: Location,
     ) -> Stmt {
         let v = self.codegen_operand(discr);
-        let switch_ty = self.monomorphize(switch_ty);
+        let switch_ty = v.typ().clone();
         if targets.all_targets().len() == 1 {
             // Translate to a guarded goto
             let first_target = targets.iter().next().unwrap();
             Stmt::block(
                 vec![
-                    v.eq(Expr::int_constant(first_target.0, self.codegen_ty(switch_ty)))
-                        .if_then_else(
-                            Stmt::goto(self.current_fn().find_label(&first_target.1), loc),
-                            None,
-                            loc,
-                        ),
+                    v.eq(Expr::int_constant(first_target.0, switch_ty)).if_then_else(
+                        Stmt::goto(self.current_fn().find_label(&first_target.1), loc),
+                        None,
+                        loc,
+                    ),
                     Stmt::goto(self.current_fn().find_label(&targets.otherwise()), loc),
                 ],
                 loc,
@@ -445,7 +400,7 @@ impl<'tcx> GotocCtx<'tcx> {
             let cases = targets
                 .iter()
                 .map(|(c, bb)| {
-                    Expr::int_constant(c, self.codegen_ty(switch_ty))
+                    Expr::int_constant(c, switch_ty.clone())
                         .switch_case(Stmt::goto(self.current_fn().find_label(&bb), loc))
                 })
                 .collect();
@@ -454,10 +409,19 @@ impl<'tcx> GotocCtx<'tcx> {
         }
     }
 
-    /// As part of **calling** a function (closure actually), we may need to un-tuple arguments.
+    /// As part of **calling** a function (or closure), we may need to un-tuple arguments.
     ///
-    /// See [GotocCtx::ty_needs_closure_untupled]
-    fn codegen_untuple_closure_args(
+    /// This function will replace the last `fargs` argument by its un-tupled version.
+    ///
+    /// Some context: A closure / shim takes two arguments:
+    ///     0. a struct (or a pointer to) representing the environment
+    ///     1. a tuple containing the parameters (if not empty)
+    ///
+    /// However, Rust generates a function where the tuple of parameters are flattened
+    /// as subsequent parameters.
+    ///
+    /// See [GotocCtx::ty_needs_untupled_args] for more details.
+    fn codegen_untupled_args(
         &mut self,
         instance: Instance<'tcx>,
         fargs: &mut Vec<Expr>,
@@ -468,32 +432,22 @@ impl<'tcx> GotocCtx<'tcx> {
             self.readable_instance_name(instance),
             fargs
         );
-        // A closure takes two arguments:
-        //     0. a struct representing the environment
-        //     1. a tuple containing the parameters
-        //
-        // However, for some reason, Rust decides to generate a function which still
-        // takes the first argument as the environment struct, but the tuple of parameters
-        // are flattened as subsequent parameters.
-        // Therefore, we have to project out the corresponding fields when we detect
-        // an invocation of a closure.
-        //
-        // Note: In some cases, the environment struct has type FnDef, so we skip it in
-        // ignore_var_ty. So the tuple is always the last arg, but it might be in the
-        // first or the second position.
-        // Note 2: For empty closures, the only argument needed is the environment struct.
         if !fargs.is_empty() {
+            let tuple_ty = self.operand_ty(last_mir_arg.unwrap());
+            if self.is_zst(tuple_ty) {
+                // Don't pass anything if all tuple elements are ZST.
+                // ZST arguments are ignored.
+                return;
+            }
             let tupe = fargs.remove(fargs.len() - 1);
-            let tupled_args: Vec<Type> = match self.operand_ty(last_mir_arg.unwrap()).kind() {
-                ty::Tuple(tupled_args) => tupled_args.iter().map(|s| self.codegen_ty(s)).collect(),
-                _ => unreachable!("Argument to function with Abi::RustCall is not a tuple"),
-            };
-
-            // Unwrap as needed
-            for (i, _) in tupled_args.iter().enumerate() {
-                // Access the tupled parameters through the `member` operation
-                let index_param = tupe.clone().member(&i.to_string(), &self.symbol_table);
-                fargs.push(index_param);
+            if let ty::Tuple(tupled_args) = tuple_ty.kind() {
+                for (idx, arg_ty) in tupled_args.iter().enumerate() {
+                    if !self.is_zst(arg_ty) {
+                        // Access the tupled parameters through the `member` operation
+                        let idx_expr = tupe.clone().member(&idx.to_string(), &self.symbol_table);
+                        fargs.push(idx_expr);
+                    }
+                }
             }
         }
     }
@@ -511,16 +465,30 @@ impl<'tcx> GotocCtx<'tcx> {
     /// Generate Goto-C for each argument to a function call.
     ///
     /// N.B. public only because instrinsics use this directly, too.
-    pub(crate) fn codegen_funcall_args(&mut self, args: &[Operand<'tcx>]) -> Vec<Expr> {
-        args.iter()
-            .map(|o| {
-                if self.operand_ty(o).is_bool() {
-                    self.codegen_operand(o).cast_to(Type::c_bool())
+    /// When `skip_zst` is set to `true`, the return value will not include any argument that is ZST.
+    /// This is used because we ignore ZST arguments, except for intrinsics.
+    pub(crate) fn codegen_funcall_args(
+        &mut self,
+        args: &[Operand<'tcx>],
+        skip_zst: bool,
+    ) -> Vec<Expr> {
+        let fargs = args
+            .iter()
+            .filter_map(|o| {
+                let op_ty = self.operand_ty(o);
+                if op_ty.is_bool() {
+                    Some(self.codegen_operand(o).cast_to(Type::c_bool()))
+                } else if !self.is_zst(op_ty) || !skip_zst {
+                    Some(self.codegen_operand(o))
                 } else {
-                    self.codegen_operand(o)
+                    // We ignore ZST types.
+                    debug!(arg=?o, "codegen_funcall_args ignore");
+                    None
                 }
             })
-            .collect()
+            .collect();
+        debug!(?fargs, "codegen_funcall_args");
+        fargs
     }
 
     /// Generates Goto-C for a MIR [TerminatorKind::Call] statement.
@@ -550,7 +518,7 @@ impl<'tcx> GotocCtx<'tcx> {
 
         let loc = self.codegen_span(&span);
         let funct = self.operand_ty(func);
-        let mut fargs = self.codegen_funcall_args(args);
+        let mut fargs = self.codegen_funcall_args(args, true);
         match &funct.kind() {
             ty::FnDef(defid, subst) => {
                 let instance =
@@ -558,8 +526,9 @@ impl<'tcx> GotocCtx<'tcx> {
                         .unwrap()
                         .unwrap();
 
-                if self.ty_needs_closure_untupled(funct) {
-                    self.codegen_untuple_closure_args(instance, &mut fargs, args.last());
+                // TODO(celina): Move this check to be inside codegen_funcall_args.
+                if self.ty_needs_untupled_args(funct) {
+                    self.codegen_untupled_args(instance, &mut fargs, args.last());
                 }
 
                 if let Some(hk) = self.hooks.hook_applies(self.tcx, instance) {
@@ -586,6 +555,7 @@ impl<'tcx> GotocCtx<'tcx> {
                     // Normal, non-virtual function calls
                     InstanceDef::Item(..)
                     | InstanceDef::DropGlue(_, Some(_))
+                    | InstanceDef::FnPtrAddrShim(_, _)
                     | InstanceDef::Intrinsic(..)
                     | InstanceDef::FnPtrShim(..)
                     | InstanceDef::VTableShim(..)
@@ -600,6 +570,7 @@ impl<'tcx> GotocCtx<'tcx> {
                                 .with_location(loc),
                         ]
                     }
+                    InstanceDef::ThreadLocalShim(_) => todo!(),
                 };
                 stmts.push(self.codegen_end_call(target.as_ref(), loc));
                 Stmt::block(stmts, loc)
@@ -660,6 +631,7 @@ impl<'tcx> GotocCtx<'tcx> {
     ) -> Vec<Stmt> {
         let vtable_field_name = self.vtable_field_name(def_id, idx);
         trace!(?self_ty, ?place, ?vtable_field_name, "codegen_virtual_funcall");
+        debug!(?fargs, "codegen_virtual_funcall");
 
         let trait_fat_ptr = self.extract_ptr(fargs[0].clone(), self_ty);
         assert!(
@@ -703,7 +675,7 @@ impl<'tcx> GotocCtx<'tcx> {
         // Otherwise, CBMC might treat this as an assume(0) and later user-added assertions
         // could become unreachable.
         let call_is_nonnull = fn_ptr.clone().is_nonnull();
-        let assert_msg = format!("Non-null virtual function call for {:?}", vtable_field_name);
+        let assert_msg = format!("Non-null virtual function call for {vtable_field_name:?}");
         let assert_nonnull = self.codegen_sanity(call_is_nonnull, &assert_msg, loc);
 
         // Virtual function call and corresponding nonnull assertion.

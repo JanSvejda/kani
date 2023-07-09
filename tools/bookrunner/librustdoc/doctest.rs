@@ -4,7 +4,8 @@
 // See GitHub history for details.
 use rustc_ast as ast;
 use rustc_data_structures::sync::Lrc;
-use rustc_errors::ColorConfig;
+use rustc_driver::DEFAULT_LOCALE_RESOURCES;
+use rustc_errors::{ColorConfig, TerminalUrl};
 use rustc_span::edition::Edition;
 use rustc_span::source_map::SourceMap;
 use rustc_span::symbol::sym;
@@ -51,7 +52,7 @@ pub fn make_test(
 
     // Next, any attributes that came from the crate root via #![doc(test(attr(...)))].
     for attr in &opts.attrs {
-        prog.push_str(&format!("#![{}]\n", attr));
+        prog.push_str(&format!("#![{attr}]\n"));
         line_offset += 1;
     }
 
@@ -79,7 +80,7 @@ pub fn make_test(
             let sm = Lrc::new(SourceMap::new(FilePathMapping::empty()));
 
             let fallback_bundle =
-                rustc_errors::fallback_fluent_bundle(rustc_errors::DEFAULT_LOCALE_RESOURCES, false);
+                rustc_errors::fallback_fluent_bundle(DEFAULT_LOCALE_RESOURCES.to_vec(), false);
             supports_color = EmitterWriter::stderr(
                 ColorConfig::Auto,
                 None,
@@ -89,11 +90,13 @@ pub fn make_test(
                 false,
                 Some(80),
                 false,
+                false,
+                TerminalUrl::No,
             )
             .supports_color();
 
             let emitter = EmitterWriter::new(
-                box io::sink(),
+                Box::new(io::sink()),
                 None,
                 None,
                 fallback_bundle,
@@ -102,10 +105,12 @@ pub fn make_test(
                 false,
                 None,
                 false,
+                false,
+                TerminalUrl::No,
             );
 
             // FIXME(misdreavus): pass `-Z treat-err-as-bug` to the doctest parser
-            let handler = Handler::with_emitter(false, None, box emitter);
+            let handler = Handler::with_emitter(false, None, Box::new(emitter));
             let sess = ParseSess::with_span_handler(handler, sm);
 
             let mut found_main = false;
@@ -207,7 +212,7 @@ pub fn make_test(
             // parse the source, but only has false positives, not false
             // negatives.
             if s.contains(crate_name) {
-                prog.push_str(&format!("extern crate r#{};\n", crate_name));
+                prog.push_str(&format!("extern crate r#{crate_name};\n"));
                 line_offset += 1;
             }
         }
@@ -221,7 +226,7 @@ pub fn make_test(
         // Give each doctest main function a unique name.
         // This is for example needed for the tooling around `-Z instrument-coverage`.
         let inner_fn_name = if let Some(test_id) = test_id {
-            format!("_doctest_main_{}", test_id)
+            format!("_doctest_main_{test_id}")
         } else {
             "_inner".into()
         };
@@ -229,15 +234,14 @@ pub fn make_test(
         let (main_pre, main_post) = if returns_result {
             (
                 format!(
-                    "fn main() {{ {}fn {}() -> Result<(), impl core::fmt::Debug> {{\n",
-                    inner_attr, inner_fn_name
+                    "fn main() {{ {inner_attr}fn {inner_fn_name}() -> Result<(), impl core::fmt::Debug> {{\n"
                 ),
-                format!("\n}} {}().unwrap() }}", inner_fn_name),
+                format!("\n}} {inner_fn_name}().unwrap() }}"),
             )
         } else if test_id.is_some() {
             (
-                format!("fn main() {{ {}fn {}() {{\n", inner_attr, inner_fn_name),
-                format!("\n}} {}() }}", inner_fn_name),
+                format!("fn main() {{ {inner_attr}fn {inner_fn_name}() {{\n"),
+                format!("\n}} {inner_fn_name}() }}"),
             )
         } else {
             ("fn main() {\n".into(), "\n}".into())

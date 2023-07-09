@@ -18,22 +18,44 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Set by our `build.rs`, reflects the Rust target triple we're building for
 const TARGET: &str = env!("TARGET");
 
-/// Where Kani has been installed. Typically `~/.kani/kani-1.x/`
-pub fn kani_dir() -> PathBuf {
-    home::home_dir()
-        .expect("Couldn't find home dir?")
-        .join(".kani")
-        .join(format!("kani-{}", VERSION))
+/// The directory where Kani is installed, either:
+///  * (custom) `${KANI_HOME}/kani-<VERSION>` if the environment variable
+///    `KANI_HOME` is set.
+///  * (default) `${HOME}/.kani/kani-<VERSION>` where `HOME` is the canonical
+///    definition of home directory used by Cargo and rustup.
+pub fn kani_dir() -> Result<PathBuf> {
+    let kani_dir = match env::var("KANI_HOME") {
+        Ok(val) => custom_kani_dir(val),
+        Err(_) => default_kani_dir()?,
+    };
+    let kani_dir = kani_dir.join(format!("kani-{VERSION}"));
+    Ok(kani_dir)
+}
+
+/// Returns the custom Kani home directory: `${KANI_HOME}`
+fn custom_kani_dir(path: String) -> PathBuf {
+    // We don't check if it doesn't exist since we create it later
+    PathBuf::from(path)
+}
+
+/// Returns the default Kani home directory: `${HOME}/.kani`
+fn default_kani_dir() -> Result<PathBuf> {
+    let home_dir = home::home_dir().expect("couldn't find home directory");
+    if !home_dir.is_dir() {
+        bail!("got home directory `{}` which isn't a directory", home_dir.display());
+    }
+    let kani_dir = home_dir.join(".kani");
+    Ok(kani_dir)
 }
 
 /// Fast check to see if we look setup already
 pub fn appears_setup() -> bool {
-    kani_dir().exists()
+    kani_dir().expect("couldn't find kani directory").exists()
 }
 
 /// Sets up Kani by unpacking/installing to `~/.kani/kani-VERSION`
 pub fn setup(use_local_bundle: Option<OsString>) -> Result<()> {
-    let kani_dir = kani_dir();
+    let kani_dir = kani_dir()?;
     let os = os_info::get();
 
     println!("[0/5] Running Kani first-time setup...");
@@ -90,11 +112,17 @@ fn setup_kani_bundle(kani_dir: &Path, use_local_bundle: Option<OsString>) -> Res
     Ok(())
 }
 
+/// Reads the Rust toolchain version that Kani was built against from the file in
+/// the Kani release bundle (unpacked in `kani_dir`).
+pub(crate) fn get_rust_toolchain_version(kani_dir: &Path) -> Result<String> {
+    std::fs::read_to_string(kani_dir.join("rust-toolchain-version"))
+        .context("Reading release bundle rust-toolchain-version")
+}
+
 /// Install the Rust toolchain version we require
 fn setup_rust_toolchain(kani_dir: &Path) -> Result<String> {
     // Currently this means we require the bundle to have been unpacked first!
-    let toolchain_version = std::fs::read_to_string(kani_dir.join("rust-toolchain-version"))
-        .context("Reading release bundle rust-toolchain-version")?;
+    let toolchain_version = get_rust_toolchain_version(kani_dir)?;
     println!("[3/5] Installing rust toolchain version: {}", &toolchain_version);
     Command::new("rustup").args(&["toolchain", "install", &toolchain_version]).run()?;
 
@@ -110,13 +138,9 @@ fn setup_python_deps(kani_dir: &Path, os: &os_info::Info) -> Result<()> {
     let pyroot = kani_dir.join("pyroot");
 
     // TODO: this is a repetition of versions from kani/kani-dependencies
-    let pkg_versions = &["cbmc-viewer==3.6"];
+    let pkg_versions = &["cbmc-viewer==3.8"];
 
-    if os.os_type() == os_info::Type::Ubuntu
-        // Check both versions: https://github.com/stanislav-tkach/os_info/issues/318
-        && (*os.version() == os_info::Version::Semantic(18, 4, 0)
-            || *os.version() == os_info::Version::Custom("18.04".into()))
-    {
+    if os_hacks::should_apply_ubuntu_18_04_python_hack(os)? {
         os_hacks::setup_python_deps_on_ubuntu_18_04(&pyroot, pkg_versions)?;
         return Ok(());
     }
@@ -136,14 +160,14 @@ fn setup_python_deps(kani_dir: &Path, os: &os_info::Info) -> Result<()> {
 
 /// The filename of the release bundle
 fn download_filename() -> String {
-    format!("kani-{}-{}.tar.gz", VERSION, TARGET)
+    format!("kani-{VERSION}-{TARGET}.tar.gz")
 }
 
 /// The download URL for this version of Kani
 fn download_url() -> String {
-    let tag: &str = &format!("kani-{}", VERSION);
+    let tag: &str = &format!("kani-{VERSION}");
     let file: &str = &download_filename();
-    format!("https://github.com/model-checking/kani/releases/download/{}/{}", tag, file)
+    format!("https://github.com/model-checking/kani/releases/download/{tag}/{file}")
 }
 
 /// Give users a better error message than "404" if we're on an unsupported platform.
@@ -151,7 +175,7 @@ fn download_url() -> String {
 fn fail_if_unsupported_target() -> Result<()> {
     // This is basically going to be reduced to a compile-time constant
     match TARGET {
-        "x86_64-unknown-linux-gnu" | "x86_64-apple-darwin" => Ok(()),
+        "x86_64-unknown-linux-gnu" | "x86_64-apple-darwin" | "aarch64-apple-darwin" => Ok(()),
         _ => bail!("Kani does not support this platform (Rust target {})", TARGET),
     }
 }

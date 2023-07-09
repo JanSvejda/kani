@@ -17,34 +17,30 @@ use super::current_fn::CurrentFnCtx;
 use super::vtable_ctx::VtableCtx;
 use crate::codegen_cprover_gotoc::overrides::{fn_hooks, GotocHooks};
 use crate::codegen_cprover_gotoc::utils::full_crate_name;
+use crate::codegen_cprover_gotoc::UnsupportedConstructs;
+use crate::kani_queries::QueryDb;
 use cbmc::goto_program::{DatatypeComponent, Expr, Location, Stmt, Symbol, SymbolTable, Type};
 use cbmc::utils::aggr_tag;
-use cbmc::InternedString;
-use cbmc::{MachineModel, RoundingMode};
-use kani_metadata::{HarnessMetadata, UnsupportedFeature};
-use kani_queries::{QueryDb, UserInput};
+use cbmc::{InternedString, MachineModel};
+use kani_metadata::HarnessMetadata;
 use rustc_data_structures::fx::FxHashMap;
-use rustc_data_structures::owning_ref::OwningRef;
-use rustc_data_structures::rustc_erase_owner;
-use rustc_data_structures::sync::MetadataRef;
 use rustc_middle::mir::interpret::Allocation;
 use rustc_middle::span_bug;
-use rustc_middle::ty::layout::{HasParamEnv, HasTyCtxt, LayoutError, LayoutOfHelpers, TyAndLayout};
+use rustc_middle::ty::layout::{
+    FnAbiError, FnAbiOfHelpers, FnAbiRequest, HasParamEnv, HasTyCtxt, LayoutError, LayoutOfHelpers,
+    TyAndLayout,
+};
 use rustc_middle::ty::{self, Instance, Ty, TyCtxt};
-use rustc_session::cstore::MetadataLoader;
-use rustc_session::Session;
-use rustc_span::source_map::Span;
-use rustc_target::abi::Endian;
+use rustc_span::source_map::{respan, Span};
+use rustc_target::abi::call::FnAbi;
 use rustc_target::abi::{HasDataLayout, TargetDataLayout};
-use rustc_target::spec::Target;
-use std::path::Path;
-use std::rc::Rc;
 
 pub struct GotocCtx<'tcx> {
     /// the typing context
     pub tcx: TyCtxt<'tcx>,
-    /// the query system for kani
-    pub queries: Rc<QueryDb>,
+    /// a snapshot of the query values. The queries shouldn't change at this point,
+    /// so we just keep a copy.
+    pub queries: QueryDb,
     /// the generated symbol table for gotoc
     pub symbol_table: SymbolTable,
     pub hooks: GotocHooks<'tcx>,
@@ -58,21 +54,31 @@ pub struct GotocCtx<'tcx> {
     pub vtable_ctx: VtableCtx,
     pub current_fn: Option<CurrentFnCtx<'tcx>>,
     pub type_map: FxHashMap<InternedString, Ty<'tcx>>,
+    /// map from symbol identifier to string literal
+    /// TODO: consider making the map from Expr to String instead
+    pub str_literals: FxHashMap<InternedString, String>,
     pub proof_harnesses: Vec<HarnessMetadata>,
     pub test_harnesses: Vec<HarnessMetadata>,
     /// a global counter for generating unique IDs for checks
     pub global_checks_count: u64,
     /// A map of unsupported constructs that were found while codegen
-    pub unsupported_constructs: FxHashMap<InternedString, Vec<Location>>,
+    pub unsupported_constructs: UnsupportedConstructs,
+    /// A map of concurrency constructs that are treated sequentially.
+    /// We collect them and print one warning at the end if not empty instead of printing one
+    /// warning at each occurrence.
+    pub concurrent_constructs: UnsupportedConstructs,
 }
 
 /// Constructor
 impl<'tcx> GotocCtx<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, queries: Rc<QueryDb>) -> GotocCtx<'tcx> {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        queries: QueryDb,
+        machine_model: &MachineModel,
+    ) -> GotocCtx<'tcx> {
         let fhks = fn_hooks();
-        let mm = machine_model_from_session(tcx.sess);
-        let symbol_table = SymbolTable::new(mm);
-        let emit_vtable_restrictions = queries.get_emit_vtable_restrictions();
+        let symbol_table = SymbolTable::new(machine_model.clone());
+        let emit_vtable_restrictions = queries.emit_vtable_restrictions;
         GotocCtx {
             tcx,
             queries,
@@ -84,10 +90,12 @@ impl<'tcx> GotocCtx<'tcx> {
             vtable_ctx: VtableCtx::new(emit_vtable_restrictions),
             current_fn: None,
             type_map: FxHashMap::default(),
+            str_literals: FxHashMap::default(),
             proof_harnesses: vec![],
             test_harnesses: vec![],
             global_checks_count: 0,
             unsupported_constructs: FxHashMap::default(),
+            concurrent_constructs: FxHashMap::default(),
         }
     }
 }
@@ -100,32 +108,6 @@ impl<'tcx> GotocCtx<'tcx> {
 
     pub fn current_fn_mut(&mut self) -> &mut CurrentFnCtx<'tcx> {
         self.current_fn.as_mut().unwrap()
-    }
-
-    /// Maps the goto-context "unsupported features" data into the
-    /// KaniMetadata "unsupported features" format.
-    ///
-    /// These are different because the KaniMetadata is a flat serializable list,
-    /// while we need a more richly structured HashMap in the goto context.
-    pub(crate) fn unsupported_metadata(&self) -> Vec<UnsupportedFeature> {
-        self.unsupported_constructs
-            .iter()
-            .map(|(construct, location)| UnsupportedFeature {
-                feature: construct.to_string(),
-                locations: location
-                    .iter()
-                    .map(|l| {
-                        // We likely (and should) have no instances of
-                        // calling `codegen_unimplemented` without file/line.
-                        // So while we map out of `Option` here, we expect them to always be `Some`
-                        (
-                            l.filename().unwrap_or_default(),
-                            l.start_line().map(|x| x.to_string()).unwrap_or_default(),
-                        )
-                    })
-                    .collect(),
-            })
-            .collect()
     }
 }
 
@@ -171,8 +153,8 @@ impl<'tcx> GotocCtx<'tcx> {
         loc: Location,
         is_param: bool,
     ) -> Symbol {
-        let base_name = format!("{}_{}", prefix, c);
-        let name = format!("{}::1::{}", fname, base_name);
+        let base_name = format!("{prefix}_{c}");
+        let name = format!("{fname}::1::{base_name}");
         let symbol = Symbol::variable(name, base_name, t, loc).with_is_parameter(is_param);
         self.symbol_table.insert(symbol.clone());
         symbol
@@ -300,7 +282,7 @@ impl<'tcx> GotocCtx<'tcx> {
         Type::union_tag(union_name)
     }
 
-    /// Makes a __attribute__((constructor)) fnname() {body} initalizer function
+    /// Makes a `__attribute__((constructor)) fnname() {body}` initalizer function
     pub fn register_initializer(&mut self, var_name: &str, body: Stmt) -> &Symbol {
         let fn_name = Self::initializer_fn_name(var_name);
         let pretty_name = format!("{var_name}::init");
@@ -327,7 +309,7 @@ impl<'tcx> GotocCtx<'tcx> {
                 .instance_mir(instance.def)
                 .basic_blocks
                 .indices()
-                .map(|bb| format!("{:?}", bb))
+                .map(|bb| format!("{bb:?}"))
                 .collect(),
         ));
     }
@@ -339,14 +321,14 @@ impl<'tcx> GotocCtx<'tcx> {
     pub fn next_global_name(&mut self) -> String {
         let c = self.global_var_count;
         self.global_var_count += 1;
-        format!("{}::global::{}::", self.full_crate_name(), c)
+        format!("{}::global::{c}::", self.full_crate_name())
     }
 
     pub fn next_check_id(&mut self) -> String {
         // check id is KANI_CHECK_ID_<crate_name>_<counter>
         let c = self.global_checks_count;
         self.global_checks_count += 1;
-        format!("KANI_CHECK_ID_{}_{}", self.full_crate_name, c)
+        format!("KANI_CHECK_ID_{}_{c}", self.full_crate_name)
     }
 }
 
@@ -376,127 +358,35 @@ impl<'tcx> HasDataLayout for GotocCtx<'tcx> {
         self.tcx.data_layout()
     }
 }
-pub struct GotocMetadataLoader();
-impl MetadataLoader for GotocMetadataLoader {
-    fn get_rlib_metadata(&self, _: &Target, _filename: &Path) -> Result<MetadataRef, String> {
-        let buf = vec![];
-        let buf: OwningRef<Vec<u8>, [u8]> = OwningRef::new(buf);
-        Ok(rustc_erase_owner!(buf.map_owner_box()))
-    }
 
-    fn get_dylib_metadata(&self, target: &Target, filename: &Path) -> Result<MetadataRef, String> {
-        self.get_rlib_metadata(target, filename)
-    }
-}
+/// Implement error handling for extracting function ABI information.
+impl<'tcx> FnAbiOfHelpers<'tcx> for GotocCtx<'tcx> {
+    type FnAbiOfResult = &'tcx FnAbi<'tcx, Ty<'tcx>>;
 
-/// Builds a machine model which is required by CBMC
-fn machine_model_from_session(sess: &Session) -> MachineModel {
-    // The model assumes a `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`
-    // or `aarch64-apple-darwin` platform. We check the target platform in function
-    // `check_target` from src/kani-compiler/src/codegen_cprover_gotoc/compiler_interface.rs
-    // and error if it is not any of the ones we expect.
-    let architecture = &sess.target.arch;
-    let pointer_width = sess.target.pointer_width.into();
-
-    // The model assumes the following values for session options:
-    //   * `min_global_align`: 1
-    //   * `endian`: `Endian::Little`
-    //
-    // We check these options in function `check_options` from
-    // src/kani-compiler/src/codegen_cprover_gotoc/compiler_interface.rs
-    // and error if their values are not the ones we expect.
-    let alignment = sess.target.options.min_global_align.unwrap_or(1);
-    let is_big_endian = match sess.target.options.endian {
-        Endian::Little => false,
-        Endian::Big => true,
-    };
-
-    // The values below cannot be obtained from the session so they are
-    // hardcoded using standard ones for the supported platforms
-    // see /tools/sizeofs/main.cpp.
-    // For reference, the definition in CBMC:
-    //https://github.com/diffblue/cbmc/blob/develop/src/util/config.cpp
-    match architecture.as_ref() {
-        "x86_64" => {
-            let bool_width = 8;
-            let char_is_unsigned = false;
-            let char_width = 8;
-            let double_width = 64;
-            let float_width = 32;
-            let int_width = 32;
-            let long_double_width = 128;
-            let long_int_width = 64;
-            let long_long_int_width = 64;
-            let short_int_width = 16;
-            let single_width = 32;
-            let wchar_t_is_unsigned = false;
-            let wchar_t_width = 32;
-
-            MachineModel {
-                architecture: architecture.to_string(),
-                alignment,
-                bool_width,
-                char_is_unsigned,
-                char_width,
-                double_width,
-                float_width,
-                int_width,
-                is_big_endian,
-                long_double_width,
-                long_int_width,
-                long_long_int_width,
-                memory_operand_size: int_width / 8,
-                null_is_zero: true,
-                pointer_width,
-                rounding_mode: RoundingMode::ToNearest,
-                short_int_width,
-                single_width,
-                wchar_t_is_unsigned,
-                wchar_t_width,
-                word_size: int_width,
+    #[inline]
+    fn handle_fn_abi_err(
+        &self,
+        err: FnAbiError<'tcx>,
+        span: Span,
+        fn_abi_request: FnAbiRequest<'tcx>,
+    ) -> ! {
+        if let FnAbiError::Layout(LayoutError::SizeOverflow(_)) = err {
+            self.tcx.sess.emit_fatal(respan(span, err))
+        } else {
+            match fn_abi_request {
+                FnAbiRequest::OfFnPtr { sig, extra_args } => {
+                    span_bug!(
+                        span,
+                        "Error: {err:?}\n while running `fn_abi_of_fn_ptr. ({sig}, {extra_args:?})`",
+                    );
+                }
+                FnAbiRequest::OfInstance { instance, extra_args } => {
+                    span_bug!(
+                        span,
+                        "Error: {err:?}\n while running `fn_abi_of_instance. ({instance}, {extra_args:?})`",
+                    );
+                }
             }
-        }
-        "aarch64" => {
-            let bool_width = 8;
-            let char_is_unsigned = true;
-            let char_width = 8;
-            let double_width = 64;
-            let float_width = 32;
-            let int_width = 32;
-            let long_double_width = 64;
-            let long_int_width = 64;
-            let long_long_int_width = 64;
-            let short_int_width = 16;
-            let single_width = 32;
-            let wchar_t_is_unsigned = false;
-            let wchar_t_width = 32;
-
-            MachineModel {
-                architecture: architecture.to_string(),
-                alignment,
-                bool_width,
-                char_is_unsigned,
-                char_width,
-                double_width,
-                float_width,
-                int_width,
-                is_big_endian,
-                long_double_width,
-                long_int_width,
-                long_long_int_width,
-                memory_operand_size: int_width / 8,
-                null_is_zero: true,
-                pointer_width,
-                rounding_mode: RoundingMode::ToNearest,
-                short_int_width,
-                single_width,
-                wchar_t_is_unsigned,
-                wchar_t_width,
-                word_size: int_width,
-            }
-        }
-        _ => {
-            panic!("Unsupported architecture: {}", architecture);
         }
     }
 }
